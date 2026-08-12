@@ -6,6 +6,7 @@ export { ReversalWouldOverdrawError } from './reversal-would-overdraw-error.ts';
 export { CurrencyMismatchError } from './currency-mismatch-error.ts';
 export { WalletNotFoundError } from './wallet-not-found-error.ts';
 export { InvalidTransactionStateError } from './invalid-transaction-state-error.ts';
+export { InvalidLedgerEntryError } from './invalid-ledger-entry-error.ts';
 export { ReferenceNotFoundError } from './reference-not-found-error.ts';
 export { ReferenceAlreadyReversedError } from './reference-already-reversed-error.ts';
 export { ReferenceKindNotReversibleError } from './reference-kind-not-reversible-error.ts';
