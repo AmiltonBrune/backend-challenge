@@ -7,19 +7,23 @@ export abstract class IntegrationEvent<T> {
   public readonly eventId: string;
   public readonly aggregateId: string;
   public readonly correlationId: string;
-  public readonly data: T;
   private readonly _occurredAt: Date;
+  private readonly _data: T;
 
   protected constructor(props: IntegrationEventProps<T>) {
     this.eventId = props.eventId;
     this.aggregateId = props.aggregateId;
     this.correlationId = props.correlationId;
-    this.data = props.data;
     this._occurredAt = new Date(props.occurredAt.getTime());
+    this._data = structuredClone(props.data);
   }
 
   get occurredAt(): Date {
     return new Date(this._occurredAt.getTime());
+  }
+
+  get data(): T {
+    return structuredClone(this._data);
   }
 
   toJSON(): IntegrationEventEnvelope<T> {
@@ -30,7 +34,7 @@ export abstract class IntegrationEvent<T> {
       aggregateId: this.aggregateId,
       correlationId: this.correlationId,
       occurredAt: this._occurredAt.toISOString(),
-      data: this.data,
+      data: structuredClone(this._data),
     };
   }
 }

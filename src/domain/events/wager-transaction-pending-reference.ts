@@ -1,3 +1,4 @@
+import type { WagerTransactionKind } from '../wager-transaction/wager-transaction-kind.ts';
 import { IntegrationEvent } from './integration-event.ts';
 import type { IntegrationEventProps } from './integration-event-props.ts';
 
@@ -6,7 +7,7 @@ export interface WagerTransactionPendingReferenceData {
   readonly providerId: string;
   readonly externalTransactionId: string;
   readonly walletId: string;
-  readonly kind: string;
+  readonly kind: WagerTransactionKind;
   readonly referenceExternalTransactionId: string;
 }
 

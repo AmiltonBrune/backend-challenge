@@ -1,4 +1,5 @@
 import type { MoneyProps } from '../money/money-props.ts';
+import type { WagerTransactionKind } from '../wager-transaction/wager-transaction-kind.ts';
 import { IntegrationEvent } from './integration-event.ts';
 import type { IntegrationEventProps } from './integration-event-props.ts';
 
@@ -7,7 +8,7 @@ export interface WagerTransactionProcessedData {
   readonly providerId: string;
   readonly externalTransactionId: string;
   readonly walletId: string;
-  readonly kind: string;
+  readonly kind: WagerTransactionKind;
   readonly money: MoneyProps;
 }
 

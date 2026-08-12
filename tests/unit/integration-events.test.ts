@@ -6,6 +6,7 @@ import { WagerTransactionRejected } from '@domain/events/wager-transaction-rejec
 import { WagerTransactionPendingReference } from '@domain/events/wager-transaction-pending-reference.ts';
 import { WalletBalanceChanged } from '@domain/events/wallet-balance-changed.ts';
 import { FailureCode } from '@domain/errors/failure-code.ts';
+import { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 
 const occurredAt = new Date('2026-08-12T00:00:00.000Z');
 
@@ -20,7 +21,7 @@ function buildProcessed(): WagerTransactionProcessed {
       providerId: 'provider-a',
       externalTransactionId: 'ext-1',
       walletId: 'wallet-1',
-      kind: 'BET',
+      kind: WagerTransactionKind.BET,
       money: Money.from({ amount: '25.00', currency: 'BRL' }).toJSON(),
     },
   });
@@ -57,7 +58,7 @@ describe('WagerTransactionRejected', () => {
         providerId: 'provider-a',
         externalTransactionId: 'ext-2',
         walletId: 'wallet-1',
-        kind: 'BET',
+        kind: WagerTransactionKind.BET,
         failureCode: FailureCode.INSUFFICIENT_FUNDS,
       },
     });
@@ -80,7 +81,7 @@ describe('WagerTransactionPendingReference', () => {
         providerId: 'provider-a',
         externalTransactionId: 'ext-3',
         walletId: 'wallet-1',
-        kind: 'REFUND',
+        kind: WagerTransactionKind.REFUND,
         referenceExternalTransactionId: 'ext-bet-1',
       },
     });
@@ -130,7 +131,7 @@ describe('IntegrationEvent — imutabilidade de occurredAt', () => {
         providerId: 'provider-a',
         externalTransactionId: 'ext-1',
         walletId: 'wallet-1',
-        kind: 'BET',
+        kind: WagerTransactionKind.BET,
         money: Money.from({ amount: '25.00', currency: 'BRL' }).toJSON(),
       },
     });
@@ -149,6 +150,39 @@ describe('IntegrationEvent — imutabilidade de occurredAt', () => {
   });
 });
 
+describe('IntegrationEvent — imutabilidade do payload', () => {
+  it('mutar o objeto data original apos construir nao afeta o evento', () => {
+    const data = {
+      transactionId: 'tx-1',
+      providerId: 'provider-a',
+      externalTransactionId: 'ext-1',
+      walletId: 'wallet-1',
+      kind: WagerTransactionKind.BET,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }).toJSON(),
+    };
+    const event = new WagerTransactionProcessed({
+      eventId: 'evt-1',
+      aggregateId: 'tx-1',
+      correlationId: 'corr-1',
+      occurredAt,
+      data,
+    });
+
+    (data.money as { amount: string }).amount = '999.99';
+
+    expect(event.data.money.amount).toBe('25.00');
+  });
+
+  it('mutar o data retornado nao afeta leituras subsequentes', () => {
+    const event = buildProcessed();
+
+    (event.data.money as { amount: string }).amount = '999.99';
+
+    expect(event.data.money.amount).toBe('25.00');
+    expect(event.toJSON().data.money.amount).toBe('25.00');
+  });
+});
+
 describe('IntegrationEvent — serialização determinística', () => {
   it('a mesma entrada serializada duas vezes produz JSON idêntico byte a byte', () => {
     const props = {
@@ -161,7 +195,7 @@ describe('IntegrationEvent — serialização determinística', () => {
         providerId: 'provider-a',
         externalTransactionId: 'ext-1',
         walletId: 'wallet-1',
-        kind: 'BET',
+        kind: WagerTransactionKind.BET,
         money: Money.from({ amount: '25.00', currency: 'BRL' }).toJSON(),
       },
     };
