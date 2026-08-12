@@ -42,6 +42,20 @@ describe('loadConfig — comuns a todo papel', () => {
     expect(config.port).toBe(4000);
     expect(config.dbPoolSize).toBe(25);
   });
+
+  it('rejeita variavel numerica nao numerica', () => {
+    expect(() => loadConfig({ ...commonEnv, PORT: 'abc' }, 'api')).toThrow(/PORT/);
+  });
+
+  it('rejeita variavel numerica infinita', () => {
+    expect(() => loadConfig({ ...commonEnv, DB_POOL_SIZE: 'Infinity' }, 'api')).toThrow(
+      /DB_POOL_SIZE/,
+    );
+  });
+
+  it('rejeita variavel numerica fracionaria', () => {
+    expect(() => loadConfig({ ...commonEnv, PORT: '3000.5' }, 'api')).toThrow(/PORT/);
+  });
 });
 
 describe('loadConfig — papel api', () => {
@@ -74,6 +88,10 @@ describe('loadConfig — papel consumer', () => {
     const { CONSUMER_NAME, ...rest } = consumerEnv;
     expect(() => loadConfig(rest, 'consumer')).toThrow(/CONSUMER_NAME/);
   });
+
+  it('lista variaveis comuns e de consumer ausentes na mesma falha', () => {
+    expect(() => loadConfig({}, 'consumer')).toThrow(/DATABASE_URL.*SQS_QUEUE_URL/s);
+  });
 });
 
 describe('loadConfig — papel worker', () => {
@@ -99,5 +117,9 @@ describe('loadConfig — papel worker', () => {
     expect(config.worker?.outboxPollIntervalMs).toBe(500);
     expect(config.worker?.outboxBatchSize).toBe(50);
     expect(config.worker?.pendingReferenceMaxAttempts).toBe(8);
+  });
+
+  it('lista variaveis comuns e de worker ausentes na mesma falha', () => {
+    expect(() => loadConfig({}, 'worker')).toThrow(/DATABASE_URL.*EVENTS_QUEUE_URL/s);
   });
 });

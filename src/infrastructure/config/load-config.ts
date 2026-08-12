@@ -5,6 +5,7 @@ type Env = Record<string, string | undefined>;
 
 class RequiredVarCollector {
   private readonly missing: string[] = [];
+  private readonly invalid: string[] = [];
 
   constructor(private readonly env: Env) {}
 
@@ -24,54 +25,57 @@ class RequiredVarCollector {
 
   optionalInt(name: string, fallback: number): number {
     const value = this.env[name];
-    return value === undefined || value === '' ? fallback : Number(value);
+    if (value === undefined || value === '') {
+      return fallback;
+    }
+    return this.parseInt(name, value);
   }
 
-  assertNoneMissing(): void {
+  private parseInt(name: string, raw: string): number {
+    const parsed = Number(raw);
+    if (!Number.isInteger(parsed)) {
+      this.invalid.push(name);
+      return 0;
+    }
+    return parsed;
+  }
+
+  assertValid(): void {
+    const problems: string[] = [];
     if (this.missing.length > 0) {
-      throw new Error(`Variáveis de ambiente obrigatórias ausentes: ${this.missing.join(', ')}`);
+      problems.push(`ausentes: ${this.missing.join(', ')}`);
+    }
+    if (this.invalid.length > 0) {
+      problems.push(`com valor numerico invalido: ${this.invalid.join(', ')}`);
+    }
+    if (problems.length > 0) {
+      throw new Error(`Variáveis de ambiente obrigatórias ${problems.join('; ')}`);
     }
   }
 }
 
-function loadConsumerConfig(env: Env): ConsumerConfig {
-  const collector = new RequiredVarCollector(env);
-
-  const queueUrl = collector.require('SQS_QUEUE_URL');
-  const dlqUrl = collector.require('SQS_DLQ_URL');
-  const consumerName = collector.require('CONSUMER_NAME');
-  const visibilityTimeoutSeconds = collector.optionalInt('SQS_VISIBILITY_TIMEOUT_S', 30);
-  const maxMessages = collector.optionalInt('SQS_MAX_MESSAGES', 10);
-
-  collector.assertNoneMissing();
-
-  return { queueUrl, dlqUrl, consumerName, visibilityTimeoutSeconds, maxMessages };
+function readConsumerConfig(collector: RequiredVarCollector): ConsumerConfig {
+  return {
+    queueUrl: collector.require('SQS_QUEUE_URL'),
+    dlqUrl: collector.require('SQS_DLQ_URL'),
+    consumerName: collector.require('CONSUMER_NAME'),
+    visibilityTimeoutSeconds: collector.optionalInt('SQS_VISIBILITY_TIMEOUT_S', 30),
+    maxMessages: collector.optionalInt('SQS_MAX_MESSAGES', 10),
+  };
 }
 
-function loadWorkerConfig(env: Env): WorkerConfig {
-  const collector = new RequiredVarCollector(env);
-
-  const eventsQueueUrl = collector.require('EVENTS_QUEUE_URL');
-  const outboxPollIntervalMs = collector.optionalInt('OUTBOX_POLL_INTERVAL_MS', 500);
-  const outboxBatchSize = collector.optionalInt('OUTBOX_BATCH_SIZE', 50);
-  const outboxMaxAttempts = collector.optionalInt('OUTBOX_MAX_ATTEMPTS', 10);
-  const pendingReferencePollIntervalMs = collector.optionalInt(
-    'PENDING_REFERENCE_POLL_INTERVAL_MS',
-    5000,
-  );
-  const pendingReferenceMaxAttempts = collector.optionalInt('PENDING_REFERENCE_MAX_ATTEMPTS', 8);
-  const pendingReferenceTtlHours = collector.optionalInt('PENDING_REFERENCE_TTL_HOURS', 24);
-
-  collector.assertNoneMissing();
-
+function readWorkerConfig(collector: RequiredVarCollector): WorkerConfig {
   return {
-    eventsQueueUrl,
-    outboxPollIntervalMs,
-    outboxBatchSize,
-    outboxMaxAttempts,
-    pendingReferencePollIntervalMs,
-    pendingReferenceMaxAttempts,
-    pendingReferenceTtlHours,
+    eventsQueueUrl: collector.require('EVENTS_QUEUE_URL'),
+    outboxPollIntervalMs: collector.optionalInt('OUTBOX_POLL_INTERVAL_MS', 500),
+    outboxBatchSize: collector.optionalInt('OUTBOX_BATCH_SIZE', 50),
+    outboxMaxAttempts: collector.optionalInt('OUTBOX_MAX_ATTEMPTS', 10),
+    pendingReferencePollIntervalMs: collector.optionalInt(
+      'PENDING_REFERENCE_POLL_INTERVAL_MS',
+      5000,
+    ),
+    pendingReferenceMaxAttempts: collector.optionalInt('PENDING_REFERENCE_MAX_ATTEMPTS', 8),
+    pendingReferenceTtlHours: collector.optionalInt('PENDING_REFERENCE_TTL_HOURS', 24),
   };
 }
 
@@ -88,7 +92,10 @@ export function loadConfig(env: Env, role: AppRole): AppConfig {
   const awsSecretAccessKey = collector.require('AWS_SECRET_ACCESS_KEY');
   const logLevel = collector.optional('LOG_LEVEL', 'info');
 
-  collector.assertNoneMissing();
+  const consumer = role === 'consumer' ? readConsumerConfig(collector) : undefined;
+  const worker = role === 'worker' ? readWorkerConfig(collector) : undefined;
+
+  collector.assertValid();
 
   return {
     port,
@@ -100,7 +107,7 @@ export function loadConfig(env: Env, role: AppRole): AppConfig {
     awsAccessKeyId,
     awsSecretAccessKey,
     logLevel,
-    consumer: role === 'consumer' ? loadConsumerConfig(env) : undefined,
-    worker: role === 'worker' ? loadWorkerConfig(env) : undefined,
+    consumer,
+    worker,
   };
 }
