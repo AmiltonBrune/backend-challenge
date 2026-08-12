@@ -11,7 +11,7 @@ export class WalletLedgerEntry {
   public readonly money: Money;
   public readonly balanceBefore: Money;
   public readonly balanceAfter: Money;
-  public readonly createdAt: Date;
+  private readonly _createdAt: Date;
 
   private constructor(props: WalletLedgerEntryProps) {
     this.id = props.id;
@@ -21,7 +21,11 @@ export class WalletLedgerEntry {
     this.money = props.money;
     this.balanceBefore = props.balanceBefore;
     this.balanceAfter = props.balanceAfter;
-    this.createdAt = props.createdAt;
+    this._createdAt = new Date(props.createdAt.getTime());
+  }
+
+  get createdAt(): Date {
+    return new Date(this._createdAt.getTime());
   }
 
   static create(props: WalletLedgerEntryProps): WalletLedgerEntry {

@@ -98,6 +98,25 @@ describe('WalletLedgerEntry — imutabilidade e ausência de transição', () =>
   });
 });
 
+describe('WalletLedgerEntry — imutabilidade de createdAt', () => {
+  it('copia a Date recebida em create — mutar o objeto original nao afeta a entrada', () => {
+    const createdAt = new Date('2026-08-12T00:00:00.000Z');
+    const entry = WalletLedgerEntry.create({ ...validCreditProps, createdAt });
+
+    createdAt.setFullYear(1999);
+
+    expect(entry.createdAt.toISOString()).toBe('2026-08-12T00:00:00.000Z');
+  });
+
+  it('nao expoe a Date interna por referencia — mutar o retorno nao afeta a entidade', () => {
+    const entry = WalletLedgerEntry.create(validCreditProps);
+
+    entry.createdAt.setFullYear(1999);
+
+    expect(entry.createdAt.toISOString()).toBe('2026-08-12T00:00:00.000Z');
+  });
+});
+
 describe('WalletLedgerEntry.rehydrate', () => {
   it('reconstrói sem revalidar a aritmética', () => {
     const desbalanceado = { ...validCreditProps, balanceAfter: money('999.00') };
