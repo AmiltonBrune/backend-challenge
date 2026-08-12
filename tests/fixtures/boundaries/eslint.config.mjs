@@ -8,9 +8,13 @@ export default [
     settings: {
       'boundaries/root-path': import.meta.dirname,
       'boundaries/elements': layerElements,
+      'import/resolver': {
+        typescript: { project: './tsconfig.json' },
+      },
     },
     rules: {
       'boundaries/dependencies': ['error', layerDependencyPolicy],
+      'boundaries/no-unknown-files': 'error',
     },
   },
 ];

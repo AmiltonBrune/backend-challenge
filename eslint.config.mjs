@@ -23,9 +23,13 @@ export default tseslint.config(
     settings: {
       'boundaries/root-path': import.meta.dirname,
       'boundaries/elements': layerElements,
+      'import/resolver': {
+        typescript: { project: './tsconfig.json' },
+      },
     },
     rules: {
       'boundaries/dependencies': ['error', layerDependencyPolicy],
+      'boundaries/no-unknown-files': 'error',
       '@typescript-eslint/no-floating-promises': 'error',
       '@typescript-eslint/no-misused-promises': 'error',
     },

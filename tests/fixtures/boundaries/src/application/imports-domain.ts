@@ -1,3 +1,3 @@
-import { aposta } from '../domain/imports-typeorm.ts';
+import { aposta } from '../domain/valid-aggregate.ts';
 
 export const marker = aposta;

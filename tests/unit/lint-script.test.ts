@@ -5,6 +5,10 @@ const eslintBin = `${projectRoot}/node_modules/.bin/eslint`;
 
 describe('script de lint', () => {
   it('executa o eslint sobre o repositório sem erro de configuração', async () => {
+    if (!(await Bun.file(eslintBin).exists())) {
+      throw new Error(`eslint ausente em ${eslintBin}; execute bun install antes da suite`);
+    }
+
     const child = Bun.spawn([eslintBin, '.'], {
       cwd: projectRoot,
       stdout: 'pipe',
