@@ -228,6 +228,16 @@ describeIfDocker('migration de wallet_ledger_entries — contra Postgres real', 
     );
   });
 
+  it('rejeita lancamento cujo wallet_id diverge do wallet_id real da transacao', async () => {
+    const walletA = await insertWallet();
+    const walletB = await insertWallet();
+    const transactionOfA = await insertTransaction(walletA);
+
+    await expect(insertEntry(walletB, transactionOfA)).rejects.toThrow(
+      /violates foreign key constraint/,
+    );
+  });
+
   it('RULE bloqueia UPDATE — a linha permanece identica', async () => {
     const walletId = await insertWallet();
     const transactionId = await insertTransaction(walletId);

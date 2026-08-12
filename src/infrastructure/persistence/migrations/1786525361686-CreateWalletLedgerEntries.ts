@@ -5,10 +5,15 @@ export class CreateWalletLedgerEntries1786525361686 implements MigrationInterfac
 
   public async up(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query(`
+      ALTER TABLE wager_transactions ADD CONSTRAINT uq_tx_id_wallet
+        UNIQUE (id, wallet_id)
+    `);
+
+    await queryRunner.query(`
       CREATE TABLE wallet_ledger_entries (
         id uuid PRIMARY KEY,
         wallet_id uuid NOT NULL REFERENCES wallets(id),
-        transaction_id uuid NOT NULL REFERENCES wager_transactions(id),
+        transaction_id uuid NOT NULL,
         direction text NOT NULL,
         money_amount numeric(19,2) NOT NULL,
         balance_before_amount numeric(19,2) NOT NULL,
@@ -16,6 +21,11 @@ export class CreateWalletLedgerEntries1786525361686 implements MigrationInterfac
         currency char(3) NOT NULL,
         created_at timestamptz NOT NULL DEFAULT now()
       )
+    `);
+
+    await queryRunner.query(`
+      ALTER TABLE wallet_ledger_entries ADD CONSTRAINT fk_ledger_transaction_wallet
+        FOREIGN KEY (transaction_id, wallet_id) REFERENCES wager_transactions(id, wallet_id)
     `);
 
     await queryRunner.query(`
@@ -61,5 +71,8 @@ export class CreateWalletLedgerEntries1786525361686 implements MigrationInterfac
 
   public async down(queryRunner: QueryRunner): Promise<void> {
     await queryRunner.query('DROP TABLE wallet_ledger_entries');
+    await queryRunner.query(
+      'ALTER TABLE wager_transactions DROP CONSTRAINT uq_tx_id_wallet',
+    );
   }
 }
