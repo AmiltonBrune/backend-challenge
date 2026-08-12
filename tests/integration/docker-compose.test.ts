@@ -11,7 +11,19 @@ async function run(command: readonly string[]): Promise<{ stdout: string; exitCo
   return { stdout, exitCode };
 }
 
-describe('docker compose — stack de desenvolvimento', () => {
+async function dockerComposeAvailable(): Promise<boolean> {
+  try {
+    const result = await run(['docker', 'compose', 'version']);
+    return result.exitCode === 0;
+  } catch {
+    return false;
+  }
+}
+
+const hasDockerCompose = await dockerComposeAvailable();
+const describeIfDocker = hasDockerCompose ? describe : describe.skip;
+
+describeIfDocker('docker compose — stack de desenvolvimento', () => {
   it('a configuração é válida', async () => {
     const result = await run(['docker', 'compose', 'config', '--quiet']);
     expect(result.exitCode).toBe(0);
@@ -29,7 +41,7 @@ describe('docker compose — stack de desenvolvimento', () => {
   });
 });
 
-describe('docker compose — stack de teste isolada', () => {
+describeIfDocker('docker compose — stack de teste isolada', () => {
   const testFlags = ['-f', 'docker-compose.test.yml'];
 
   it('a configuração é válida isoladamente', async () => {
