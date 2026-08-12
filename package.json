@@ -9,7 +9,9 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "migration:run": "bun run scripts/migration-run.ts",
+    "migration:revert": "bun run scripts/migration-revert.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -27,7 +29,9 @@
     "@nestjs/common": "^11.1.29",
     "@nestjs/core": "^11.1.29",
     "@nestjs/platform-express": "^11.1.29",
+    "pg": "^8.23.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "typeorm": "^1.1.0"
   }
 }
