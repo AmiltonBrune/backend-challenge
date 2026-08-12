@@ -151,50 +151,41 @@ describeIfDocker('T-024 — auditoria de constraints do schema completo', () => 
       expect(await hasForeignKeyTo('wager_transactions', 'wager_transactions')).toBe(true);
     });
 
-    it('uq_tx_id_wallet rejeita insercao direta de par duplicado', async () => {
-      const walletId = await insertWallet();
-      const transactionId = crypto.randomUUID();
-
-      await dataSource().query(
-        `INSERT INTO wager_transactions
-           (id, provider_id, external_transaction_id, idempotency_key, payload_hash,
-            wallet_id, player_id, round_id, kind, money_amount, money_currency, status, created_at)
-         VALUES ($1, 'provider-a', $2, $3, 'hash', $4, $5, 'round-1', 'BET', '25.00', 'BRL', 'PROCESSED', now())`,
-        [
-          transactionId,
-          crypto.randomUUID(),
-          crypto.randomUUID(),
-          walletId,
-          crypto.randomUUID(),
-        ],
+    it('uq_tx_id_wallet cobre exatamente as colunas (id, wallet_id) — nao e testavel por insercao duplicada, pois id ja e PK isolada', async () => {
+      const rows = await dataSource().query(
+        `SELECT a.attname
+         FROM pg_constraint c
+         JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+         JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+         WHERE c.conrelid = 'wager_transactions'::regclass AND c.conname = 'uq_tx_id_wallet'
+         ORDER BY k.ord`,
       );
+      const columns = (rows as { attname: string }[]).map((r) => r.attname);
 
-      await expect(
-        dataSource().query(
-          `INSERT INTO wager_transactions
-             (id, provider_id, external_transaction_id, idempotency_key, payload_hash,
-              wallet_id, player_id, round_id, kind, money_amount, money_currency, status, created_at)
-           VALUES ($1, 'provider-a', $2, $3, 'hash', $4, $5, 'round-1', 'BET', '25.00', 'BRL', 'PROCESSED', now())`,
-          [
-            transactionId,
-            crypto.randomUUID(),
-            crypto.randomUUID(),
-            walletId,
-            crypto.randomUUID(),
-          ],
-        ),
-      ).rejects.toThrow(/duplicate key|violates unique constraint/);
+      expect(columns).toEqual(['id', 'wallet_id']);
     });
 
-    it('rejeita reference_transaction_id que nao existe', async () => {
+    it('rejeita reference_transaction_id que aponta para uma transacao inexistente — FK, nao apenas o CHECK de resolucao', async () => {
       const walletId = await insertWallet();
 
       await expect(
         insertTransaction(walletId, {
           kind: 'REFUND',
-          reference_external_transaction_id: 'ext-ref-inexistente',
+          reference_external_transaction_id: 'ext-ref-1',
+          reference_transaction_id: crypto.randomUUID(),
         }),
-      ).rejects.toThrow(/ck_tx_reference_resolved_on_processed_reversal|violates check constraint/);
+      ).rejects.toThrow(/violates foreign key constraint/);
+    });
+
+    it('rejeita REFUND/ROLLBACK PROCESSED com reference_transaction_id ausente — CHECK, nao a FK', async () => {
+      const walletId = await insertWallet();
+
+      await expect(
+        insertTransaction(walletId, {
+          kind: 'REFUND',
+          reference_external_transaction_id: 'ext-ref-1',
+        }),
+      ).rejects.toThrow(/ck_tx_reference_resolved_on_processed_reversal/);
     });
   });
 
@@ -225,10 +216,10 @@ describeIfDocker('T-024 — auditoria de constraints do schema completo', () => 
            VALUES (gen_random_uuid(), $1, $2, 'DEBIT', '25.00', '10.00', '-15.00', 'BRL', now())`,
           [walletId, transactionId],
         ),
-      ).rejects.toThrow(/ck_ledger_balance_non_negative|violates check constraint/);
+      ).rejects.toThrow(/ck_ledger_balance_non_negative/);
     });
 
-    it('ck_ledger_balance_non_negative rejeita balance_after_amount NaN isoladamente', async () => {
+    it('ck_ledger_balance_non_negative rejeita NaN isoladamente — mesmo quando NaN = NaN + money satisfaz a aritmetica', async () => {
       const walletId = await insertWallet();
       const transactionId = await insertTransaction(walletId);
 
@@ -237,10 +228,10 @@ describeIfDocker('T-024 — auditoria de constraints do schema completo', () => 
           `INSERT INTO wallet_ledger_entries
              (id, wallet_id, transaction_id, direction, money_amount,
               balance_before_amount, balance_after_amount, currency, created_at)
-           VALUES (gen_random_uuid(), $1, $2, 'CREDIT', '25.00', '10.00', 'NaN', 'BRL', now())`,
+           VALUES (gen_random_uuid(), $1, $2, 'CREDIT', '25.00', 'NaN', 'NaN', 'BRL', now())`,
           [walletId, transactionId],
         ),
-      ).rejects.toThrow(/ck_ledger_balance_non_negative|violates check constraint/);
+      ).rejects.toThrow(/ck_ledger_balance_non_negative/);
     });
   });
 
