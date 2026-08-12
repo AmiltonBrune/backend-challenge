@@ -8,6 +8,7 @@ export { WalletNotFoundError } from './wallet-not-found-error.ts';
 export { InvalidTransactionStateError } from './invalid-transaction-state-error.ts';
 export { InvalidLedgerEntryError } from './invalid-ledger-entry-error.ts';
 export { InvalidWagerTransactionError } from './invalid-wager-transaction-error.ts';
+export { InvalidOutboxMessageError } from './invalid-outbox-message-error.ts';
 export { ReferenceNotFoundError } from './reference-not-found-error.ts';
 export { ReferenceAlreadyReversedError } from './reference-already-reversed-error.ts';
 export { ReferenceKindNotReversibleError } from './reference-kind-not-reversible-error.ts';
