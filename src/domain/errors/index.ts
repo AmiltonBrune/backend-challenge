@@ -1,1 +1,16 @@
-export {};
+export { FailureCode } from './failure-code.ts';
+export { DomainError } from './domain-error.ts';
+export { BusinessRuleViolationError } from './business-rule-violation-error.ts';
+export { InsufficientFundsError } from './insufficient-funds-error.ts';
+export { ReversalWouldOverdrawError } from './reversal-would-overdraw-error.ts';
+export { CurrencyMismatchError } from './currency-mismatch-error.ts';
+export { WalletNotFoundError } from './wallet-not-found-error.ts';
+export { InvalidTransactionStateError } from './invalid-transaction-state-error.ts';
+export { ReferenceNotFoundError } from './reference-not-found-error.ts';
+export { ReferenceAlreadyReversedError } from './reference-already-reversed-error.ts';
+export { ReferenceKindNotReversibleError } from './reference-kind-not-reversible-error.ts';
+export { ReferenceAmountMismatchError } from './reference-amount-mismatch-error.ts';
+export { ReferenceContextMismatchError } from './reference-context-mismatch-error.ts';
+export { ReferenceNotProcessedError } from './reference-not-processed-error.ts';
+export { PlayerWalletMismatchError } from './player-wallet-mismatch-error.ts';
+export { InternalKindNotAllowedError } from './internal-kind-not-allowed-error.ts';
