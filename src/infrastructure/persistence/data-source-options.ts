@@ -1,5 +1,12 @@
 import { fileURLToPath } from 'node:url';
 import type { DataSourceOptions } from 'typeorm';
+import {
+  InboxMessageEntity,
+  OutboxMessageEntity,
+  WagerTransactionEntity,
+  WalletEntity,
+  WalletLedgerEntryEntity,
+} from './entities/index.ts';
 
 const migrationsDir = fileURLToPath(new URL('./migrations/*.ts', import.meta.url));
 
@@ -14,7 +21,13 @@ export function buildDataSourceOptions(params: DataSourceOptionsParams): DataSou
     type: 'postgres',
     url: params.databaseUrl,
     synchronize: false,
-    entities: [],
+    entities: [
+      WalletEntity,
+      WagerTransactionEntity,
+      WalletLedgerEntryEntity,
+      InboxMessageEntity,
+      OutboxMessageEntity,
+    ],
     migrations: [migrationsDir],
     extra: {
       max: params.poolSize,

@@ -58,9 +58,13 @@ describe('buildDataSourceOptions', () => {
     expect(String(migrations[0])).toContain('persistence/migrations');
   });
 
-  it('nao declara entidades ainda', () => {
+  it('declara as cinco entidades do schema', () => {
     const options = buildDataSourceOptions(baseParams);
+    const entities = options.entities;
 
-    expect(options.entities).toEqual([]);
+    if (!Array.isArray(entities)) {
+      throw new Error('esperava entities como array');
+    }
+    expect(entities).toHaveLength(5);
   });
 });
