@@ -5,6 +5,7 @@ import { FailureCode } from '@domain/errors/failure-code.ts';
 import { InsufficientFundsError } from '@domain/errors/insufficient-funds-error.ts';
 import { ReversalWouldOverdrawError } from '@domain/errors/reversal-would-overdraw-error.ts';
 import { CurrencyMismatchError } from '@domain/errors/currency-mismatch-error.ts';
+import { WalletNotFoundError } from '@domain/errors/wallet-not-found-error.ts';
 import { InvalidTransactionStateError } from '@domain/errors/invalid-transaction-state-error.ts';
 import { ReferenceNotFoundError } from '@domain/errors/reference-not-found-error.ts';
 import { ReferenceAlreadyReversedError } from '@domain/errors/reference-already-reversed-error.ts';
@@ -59,6 +60,11 @@ const businessRuleCases: readonly [string, () => BusinessRuleViolationError, Fai
     'CurrencyMismatchError',
     () => new CurrencyMismatchError('BRL', 'USD'),
     FailureCode.CURRENCY_MISMATCH,
+  ],
+  [
+    'WalletNotFoundError',
+    () => new WalletNotFoundError('wallet-1'),
+    FailureCode.WALLET_NOT_FOUND,
   ],
   [
     'ReferenceNotFoundError',
