@@ -1,4 +1,5 @@
 export type { TransactionContext } from './transaction-context.ts';
+export type { UnitOfWork } from './unit-of-work.ts';
 export type { WalletRepository } from './wallet-repository.ts';
 export type { WagerTransactionRepository } from './wager-transaction-repository.ts';
 export type { LedgerRepository } from './ledger-repository.ts';
