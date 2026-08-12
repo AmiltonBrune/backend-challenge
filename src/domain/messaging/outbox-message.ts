@@ -19,7 +19,7 @@ export class OutboxMessage {
   public readonly id: string;
   public readonly aggregateId: string;
   public readonly eventType: string;
-  public readonly payload: IntegrationEventEnvelope<unknown>;
+  private readonly _payload: IntegrationEventEnvelope<unknown>;
   private _attempts: number;
   private _nextAttemptAt: Date | undefined;
   private _publishedAt: Date | undefined;
@@ -28,7 +28,7 @@ export class OutboxMessage {
     this.id = state.id;
     this.aggregateId = state.aggregateId;
     this.eventType = state.eventType;
-    this.payload = state.payload;
+    this._payload = structuredClone(state.payload);
     this._attempts = state.attempts;
     this._nextAttemptAt =
       state.nextAttemptAt === undefined ? undefined : new Date(state.nextAttemptAt.getTime());
@@ -46,6 +46,10 @@ export class OutboxMessage {
       nextAttemptAt: undefined,
       publishedAt: undefined,
     });
+  }
+
+  get payload(): IntegrationEventEnvelope<unknown> {
+    return structuredClone(this._payload);
   }
 
   attempts(): number {

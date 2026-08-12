@@ -31,6 +31,14 @@ describe('OutboxMessage.enqueue', () => {
     expect(message.payload.eventType).toBe('WagerTransactionProcessed');
   });
 
+  it('nao expoe o payload por referencia — mutar o retorno nao afeta leituras subsequentes', () => {
+    const message = OutboxMessage.enqueue(buildEvent());
+
+    (message.payload as { eventType: string }).eventType = 'Adulterado';
+
+    expect(message.payload.eventType).toBe('WagerTransactionProcessed');
+  });
+
   it('e pendente e ja esta due imediatamente — sem next_attempt_at ela nunca espera', () => {
     const message = OutboxMessage.enqueue(buildEvent());
 
