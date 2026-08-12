@@ -38,5 +38,8 @@ export default tseslint.config(
   {
     files: ['tests/**/*.ts'],
     extends: [tseslint.configs.disableTypeChecked],
+    rules: {
+      '@typescript-eslint/no-unused-vars': ['error', { ignoreRestSiblings: true }],
+    },
   },
 );
