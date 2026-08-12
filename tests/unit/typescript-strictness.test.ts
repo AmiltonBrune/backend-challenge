@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'bun:test';
 
-const projectRoot = Bun.fileURLToPath(new URL('../..', import.meta.url));
+const projectRoot = Bun.fileURLToPath(new URL('../../', import.meta.url)).replace(/\/$/, '');
 const compiler = `${projectRoot}/node_modules/.bin/tsc`;
 
 interface TypeCheckResult {
@@ -9,6 +9,10 @@ interface TypeCheckResult {
 }
 
 async function typeCheck(project: string): Promise<TypeCheckResult> {
+  if (!(await Bun.file(compiler).exists())) {
+    throw new Error(`compilador ausente em ${compiler}; execute bun install antes da suite`);
+  }
+
   const child = Bun.spawn([compiler, '--noEmit', '--pretty', 'false', '--project', project], {
     cwd: projectRoot,
     stdout: 'pipe',
@@ -45,22 +49,22 @@ describe('rigor do verificador de tipos', () => {
   });
 
   it('rejeita parâmetro com any implícito', () => {
-    expect(violations.output).toContain('implicit-any.ts');
-    expect(violations.output).toContain('TS7006');
+    expect(violations.output).toMatch(/implicit-any\.ts.*error TS7006/);
   });
 
   it('rejeita acesso a índice de array tratado como sempre presente', () => {
-    expect(violations.output).toContain('unchecked-index.ts');
-    expect(violations.output).toContain('TS2322');
+    expect(violations.output).toMatch(/unchecked-index\.ts.*error TS2322/);
   });
 
   it('rejeita sobrescrita de método sem a palavra-chave override', () => {
-    expect(violations.output).toContain('missing-override.ts');
-    expect(violations.output).toContain('TS4114');
+    expect(violations.output).toMatch(/missing-override\.ts.*error TS4114/);
   });
 
   it('rejeita undefined atribuído a propriedade opcional', () => {
-    expect(violations.output).toContain('exact-optional.ts');
-    expect(violations.output).toContain('TS2375');
+    expect(violations.output).toMatch(/exact-optional\.ts.*error TS2375/);
+  });
+
+  it('rejeita reexportação de tipo sem a palavra-chave type', () => {
+    expect(violations.output).toMatch(/type-only-reexport\.ts.*error TS1205/);
   });
 });

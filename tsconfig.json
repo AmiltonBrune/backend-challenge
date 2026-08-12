@@ -7,13 +7,13 @@
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": false,
+    "isolatedModules": true,
     "allowJs": false,
     "noEmit": true,
     "types": ["bun"],
 
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
-    "useDefineForClassFields": false,
 
     "strict": true,
     "noUncheckedIndexedAccess": true,
@@ -36,6 +36,6 @@
       "@tests/*": ["tests/*"]
     }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts"],
+  "include": ["src/**/*", "tests/**/*", "scripts/**/*", "*.ts"],
   "exclude": ["node_modules", "dist", "tests/fixtures/strictness/**"]
 }
