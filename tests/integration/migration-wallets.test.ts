@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import type { DataSource } from 'typeorm';
 
-const databaseUrl = 'postgres://wagering:wagering@localhost:5432/wagering';
+const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
+const composeArgs = ['-f', 'docker-compose.test.yml'] as const;
 
 async function dockerComposeAvailable(): Promise<boolean> {
   try {
@@ -14,7 +15,10 @@ async function dockerComposeAvailable(): Promise<boolean> {
 }
 
 async function runDockerCompose(args: readonly string[]): Promise<void> {
-  const child = Bun.spawn(['docker', 'compose', ...args], { stdout: 'pipe', stderr: 'pipe' });
+  const child = Bun.spawn(['docker', 'compose', ...composeArgs, ...args], {
+    stdout: 'pipe',
+    stderr: 'pipe',
+  });
   const exitCode = await child.exited;
   if (exitCode !== 0) {
     const stderr = await new Response(child.stderr).text();
@@ -25,26 +29,36 @@ async function runDockerCompose(args: readonly string[]): Promise<void> {
 const hasDockerCompose = await dockerComposeAvailable();
 const describeIfDocker = hasDockerCompose ? describe : describe.skip;
 
-let AppDataSource: DataSource;
+let AppDataSource: DataSource | undefined;
 
 describeIfDocker('migration de wallets — contra Postgres real', () => {
   beforeAll(async () => {
     process.env['DATABASE_URL'] = databaseUrl;
-    await runDockerCompose(['up', '-d', '--wait', 'postgres']);
+    await runDockerCompose(['up', '-d', '--wait', 'postgres-test']);
     ({ AppDataSource } = await import('@infrastructure/persistence/data-source.ts'));
     await AppDataSource.initialize();
     await AppDataSource.runMigrations();
   }, 60_000);
 
   afterAll(async () => {
-    if (AppDataSource.isInitialized) {
-      await AppDataSource.destroy();
+    try {
+      if (AppDataSource?.isInitialized === true) {
+        await AppDataSource.destroy();
+      }
+    } finally {
+      await runDockerCompose(['down', '-v']);
     }
-    await runDockerCompose(['down', '-v']);
   }, 30_000);
 
+  function dataSource(): DataSource {
+    if (AppDataSource === undefined) {
+      throw new Error('AppDataSource não inicializado — beforeAll falhou');
+    }
+    return AppDataSource;
+  }
+
   it('cria a tabela wallets', async () => {
-    const rows = await AppDataSource.query(
+    const rows = await dataSource().query(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'wallets' ORDER BY column_name`,
     );
     const columns = (rows as { column_name: string }[]).map((r) => r.column_name);
@@ -62,16 +76,25 @@ describeIfDocker('migration de wallets — contra Postgres real', () => {
 
   it('rejeita saldo negativo via CHECK', async () => {
     await expect(
-      AppDataSource.query(
+      dataSource().query(
         `INSERT INTO wallets (id, player_id, currency, balance_amount, version, created_at, updated_at)
          VALUES (gen_random_uuid(), gen_random_uuid(), 'BRL', -10.00, 1, now(), now())`,
       ),
     ).rejects.toThrow(/ck_wallet_balance_non_negative|violates check constraint/);
   });
 
+  it('rejeita NaN como saldo — numeric aceita NaN e o define maior que qualquer valor', async () => {
+    await expect(
+      dataSource().query(
+        `INSERT INTO wallets (id, player_id, currency, balance_amount, version, created_at, updated_at)
+         VALUES (gen_random_uuid(), gen_random_uuid(), 'BRL', 'NaN', 1, now(), now())`,
+      ),
+    ).rejects.toThrow(/ck_wallet_balance_non_negative|violates check constraint/);
+  });
+
   it('rejeita version menor que 1 via CHECK', async () => {
     await expect(
-      AppDataSource.query(
+      dataSource().query(
         `INSERT INTO wallets (id, player_id, currency, balance_amount, version, created_at, updated_at)
          VALUES (gen_random_uuid(), gen_random_uuid(), 'BRL', 0.00, 0, now(), now())`,
       ),
@@ -79,16 +102,16 @@ describeIfDocker('migration de wallets — contra Postgres real', () => {
   });
 
   it('rejeita duas wallets para o mesmo player e moeda', async () => {
-    const playerId: string = (await AppDataSource.query('SELECT gen_random_uuid() AS id'))[0].id;
+    const playerId: string = (await dataSource().query('SELECT gen_random_uuid() AS id'))[0].id;
 
-    await AppDataSource.query(
+    await dataSource().query(
       `INSERT INTO wallets (id, player_id, currency, balance_amount, version, created_at, updated_at)
        VALUES (gen_random_uuid(), $1, 'BRL', 100.00, 1, now(), now())`,
       [playerId],
     );
 
     await expect(
-      AppDataSource.query(
+      dataSource().query(
         `INSERT INTO wallets (id, player_id, currency, balance_amount, version, created_at, updated_at)
          VALUES (gen_random_uuid(), $1, 'BRL', 50.00, 1, now(), now())`,
         [playerId],
@@ -97,14 +120,12 @@ describeIfDocker('migration de wallets — contra Postgres real', () => {
   });
 
   it('reverte removendo a tabela', async () => {
-    await AppDataSource.undoLastMigration();
+    await dataSource().undoLastMigration();
 
-    const rows = await AppDataSource.query(
-      `SELECT to_regclass('public.wallets') AS exists_check`,
-    );
+    const rows = await dataSource().query(`SELECT to_regclass('public.wallets') AS exists_check`);
 
     expect((rows as { exists_check: string | null }[])[0]?.exists_check).toBeNull();
 
-    await AppDataSource.runMigrations();
+    await dataSource().runMigrations();
   });
 });

@@ -23,7 +23,7 @@ export class CreateWallets1786516339142 implements MigrationInterface {
 
     await queryRunner.query(`
       ALTER TABLE wallets ADD CONSTRAINT ck_wallet_balance_non_negative
-        CHECK (balance_amount >= 0)
+        CHECK (balance_amount >= 0 AND balance_amount < 'NaN')
     `);
 
     await queryRunner.query(`
