@@ -22,13 +22,14 @@ function buildEvent(): WagerTransactionProcessed {
 }
 
 describe('OutboxMessage.enqueue', () => {
-  it('deriva id, aggregateId, eventType e payload do evento', () => {
+  it('deriva id, aggregateId, eventType, payload e occurredAt do evento', () => {
     const message = OutboxMessage.enqueue(buildEvent());
 
     expect(message.id).toBe('evt-1');
     expect(message.aggregateId).toBe('tx-1');
     expect(message.eventType).toBe('WagerTransactionProcessed');
     expect(message.payload.eventType).toBe('WagerTransactionProcessed');
+    expect(message.occurredAt.toISOString()).toBe('2026-08-12T00:00:00.000Z');
   });
 
   it('nao expoe o payload por referencia — mutar o retorno nao afeta leituras subsequentes', () => {
@@ -114,5 +115,44 @@ describe('OutboxMessage.scheduleRetry', () => {
     message.markPublished(new Date('2026-08-12T00:05:00.000Z'));
 
     expect(() => message.scheduleRetry(new Date('2026-08-12T00:06:00.000Z'))).toThrow();
+  });
+});
+
+describe('OutboxMessage.rehydrate', () => {
+  it('reconstroi o estado exatamente como informado, sem revalidar', () => {
+    const occurredAt = new Date('2026-08-12T00:00:00.000Z');
+    const nextAttemptAt = new Date('2026-08-12T00:05:00.000Z');
+    const message = OutboxMessage.rehydrate({
+      id: 'evt-1',
+      aggregateId: 'tx-1',
+      eventType: 'WagerTransactionProcessed',
+      payload: buildEvent().toJSON(),
+      occurredAt,
+      attempts: 3,
+      nextAttemptAt,
+      publishedAt: undefined,
+    });
+
+    expect(message.attempts()).toBe(3);
+    expect(message.nextAttemptAt()?.toISOString()).toBe(nextAttemptAt.toISOString());
+    expect(message.occurredAt.toISOString()).toBe(occurredAt.toISOString());
+    expect(message.isPending()).toBe(true);
+  });
+
+  it('reconstroi uma mensagem ja publicada', () => {
+    const publishedAt = new Date('2026-08-12T00:10:00.000Z');
+    const message = OutboxMessage.rehydrate({
+      id: 'evt-1',
+      aggregateId: 'tx-1',
+      eventType: 'WagerTransactionProcessed',
+      payload: buildEvent().toJSON(),
+      occurredAt: new Date('2026-08-12T00:00:00.000Z'),
+      attempts: 1,
+      nextAttemptAt: undefined,
+      publishedAt,
+    });
+
+    expect(message.isPending()).toBe(false);
+    expect(message.publishedAt()?.toISOString()).toBe(publishedAt.toISOString());
   });
 });

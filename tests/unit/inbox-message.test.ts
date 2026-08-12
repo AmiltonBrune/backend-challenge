@@ -58,3 +58,28 @@ describe('InboxMessage.markProcessed', () => {
     expect(message.processedAt()?.toISOString()).toBe('2026-08-12T00:00:00.000Z');
   });
 });
+
+describe('InboxMessage.rehydrate', () => {
+  it('reconstroi uma mensagem nao processada', () => {
+    const message = InboxMessage.rehydrate({
+      messageId: 'msg-1',
+      consumerName: 'wager-consumer',
+      payloadHash: 'hash-1',
+    });
+
+    expect(message.isProcessed()).toBe(false);
+  });
+
+  it('reconstroi uma mensagem ja processada com o processedAt persistido', () => {
+    const processedAt = new Date('2026-08-12T00:00:00.000Z');
+    const message = InboxMessage.rehydrate({
+      messageId: 'msg-1',
+      consumerName: 'wager-consumer',
+      payloadHash: 'hash-1',
+      processedAt,
+    });
+
+    expect(message.isProcessed()).toBe(true);
+    expect(message.processedAt()?.toISOString()).toBe('2026-08-12T00:00:00.000Z');
+  });
+});
