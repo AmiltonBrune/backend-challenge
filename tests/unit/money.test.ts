@@ -49,6 +49,25 @@ describe('Money.from — entradas rejeitadas', () => {
   it('rejeita moeda vazia', () => {
     expect(() => Money.from({ amount: '5.00', currency: '' })).toThrow();
   });
+
+  it('aceita ate 17 digitos inteiros — limite de NUMERIC(19,2)', () => {
+    const money = Money.from({ amount: '99999999999999999.99', currency: 'BRL' });
+
+    expect(money.toJSON().amount).toBe('99999999999999999.99');
+  });
+
+  it('rejeita 18 ou mais digitos inteiros — excederia NUMERIC(19,2) e a precisao do decimal.js', () => {
+    expect(() =>
+      Money.from({ amount: '100000000000000000.00', currency: 'BRL' }),
+    ).toThrow();
+  });
+
+  it('nunca perde centavos em soma com valor no limite de precisao', () => {
+    const grande = Money.from({ amount: '99999999999999999.99', currency: 'BRL' });
+    const centavo = Money.from({ amount: '0.01', currency: 'BRL' });
+
+    expect(() => grande.add(centavo)).not.toThrow();
+  });
 });
 
 describe('Money — imutabilidade', () => {
