@@ -132,12 +132,22 @@ export class WagerTransaction {
 
   markProcessed(referenceTransactionId: string | undefined, at: Date): void {
     this.assertNotTerminal('markProcessed');
+    if (this.requiresReference() && referenceTransactionId === undefined) {
+      throw new InvalidWagerTransactionError(
+        `${this.kind} exige referenceTransactionId resolvido antes de marcar PROCESSED`,
+      );
+    }
     this._status = WagerTransactionStatus.PROCESSED;
     this._referenceTransactionId = referenceTransactionId;
     this._processedAt = new Date(at.getTime());
   }
 
   markPendingReference(): void {
+    if (!this.requiresReference()) {
+      throw new InvalidWagerTransactionError(
+        `${this.kind} não pode entrar em PENDING_REFERENCE — não exige referência`,
+      );
+    }
     if (this._status !== WagerTransactionStatus.PENDING) {
       throw new InvalidTransactionStateError(this._status, 'markPendingReference');
     }

@@ -204,6 +204,18 @@ describe('markProcessed', () => {
 
     expect(() => tx.markProcessed(undefined, processedAt)).toThrow(InvalidTransactionStateError);
   });
+
+  it('lanca quando REFUND/ROLLBACK e marcado PROCESSED sem referenceTransactionId', () => {
+    const refund = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+
+    expect(() => refund.markProcessed(undefined, processedAt)).toThrow();
+  });
+
+  it('permite BET/WIN/LOSS/OPENING marcados PROCESSED sem referenceTransactionId', () => {
+    const bet = WagerTransaction.create(baseProps(WagerTransactionKind.BET));
+
+    expect(() => bet.markProcessed(undefined, processedAt)).not.toThrow();
+  });
 });
 
 describe('markPendingReference', () => {
@@ -224,10 +236,16 @@ describe('markPendingReference', () => {
   });
 
   it('lanca a partir de estado terminal', () => {
-    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.BET));
-    tx.reject(FailureCode.INSUFFICIENT_FUNDS);
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+    tx.reject(FailureCode.REFERENCE_NOT_FOUND);
 
     expect(() => tx.markPendingReference()).toThrow(InvalidTransactionStateError);
+  });
+
+  it('lanca para kind que nao exige referencia — BET nunca fica PENDING_REFERENCE', () => {
+    const bet = WagerTransaction.create(baseProps(WagerTransactionKind.BET));
+
+    expect(() => bet.markPendingReference()).toThrow();
   });
 });
 
