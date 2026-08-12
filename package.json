@@ -1,0 +1,16 @@
+{
+  "name": "distributed-wagering-processor",
+  "version": "0.1.0",
+  "description": "Processador distribuído de transações de aposta com correção financeira sob entrega at-least-once",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  }
+}
