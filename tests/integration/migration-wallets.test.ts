@@ -120,11 +120,16 @@ describeIfDocker('migration de wallets — contra Postgres real', () => {
   });
 
   it('reverte removendo a tabela', async () => {
-    await dataSource().undoLastMigration();
+    async function walletsExists(): Promise<boolean> {
+      const rows = await dataSource().query(`SELECT to_regclass('public.wallets') AS exists_check`);
+      return (rows as { exists_check: string | null }[])[0]?.exists_check !== null;
+    }
 
-    const rows = await dataSource().query(`SELECT to_regclass('public.wallets') AS exists_check`);
+    while (await walletsExists()) {
+      await dataSource().undoLastMigration();
+    }
 
-    expect((rows as { exists_check: string | null }[])[0]?.exists_check).toBeNull();
+    expect(await walletsExists()).toBe(false);
 
     await dataSource().runMigrations();
   });

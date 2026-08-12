@@ -54,6 +54,13 @@ export class CreateWagerTransactions1786522316953 implements MigrationInterface 
     `);
 
     await queryRunner.query(`
+      ALTER TABLE wager_transactions ADD CONSTRAINT ck_tx_reference_resolved_on_processed_reversal
+        CHECK (status != 'PROCESSED'
+               OR kind NOT IN ('REFUND', 'ROLLBACK')
+               OR reference_transaction_id IS NOT NULL)
+    `);
+
+    await queryRunner.query(`
       CREATE UNIQUE INDEX uq_reversal_per_reference
         ON wager_transactions (reference_transaction_id, kind)
         WHERE status = 'PROCESSED' AND kind IN ('REFUND', 'ROLLBACK')

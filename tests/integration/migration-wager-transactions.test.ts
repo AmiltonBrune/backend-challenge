@@ -262,14 +262,36 @@ describeIfDocker('migration de wager_transactions — contra Postgres real', () 
     ).resolves.toBeDefined();
   });
 
+  it('rejeita REFUND/ROLLBACK PROCESSED sem reference_transaction_id resolvido', async () => {
+    const walletId = await insertWallet();
+
+    await expect(
+      dataSource().query(
+        `INSERT INTO wager_transactions
+           (id, provider_id, external_transaction_id, idempotency_key, payload_hash,
+            wallet_id, player_id, round_id, kind, money_amount, money_currency,
+            reference_external_transaction_id, status, created_at)
+         VALUES
+           (gen_random_uuid(), 'provider-a', $1, $2, 'hash', $3, $4, 'round-1', 'REFUND', '25.00', 'BRL',
+            'ext-ref-sem-resolucao', 'PROCESSED', now())`,
+        [crypto.randomUUID(), crypto.randomUUID(), walletId, crypto.randomUUID()],
+      ),
+    ).rejects.toThrow(/ck_tx_reference_resolved_on_processed_reversal|violates check constraint/);
+  });
+
   it('reverte removendo a tabela', async () => {
-    await dataSource().undoLastMigration();
+    async function tableExists(): Promise<boolean> {
+      const rows = await dataSource().query(
+        `SELECT to_regclass('public.wager_transactions') AS exists_check`,
+      );
+      return (rows as { exists_check: string | null }[])[0]?.exists_check !== null;
+    }
 
-    const rows = await dataSource().query(
-      `SELECT to_regclass('public.wager_transactions') AS exists_check`,
-    );
+    while (await tableExists()) {
+      await dataSource().undoLastMigration();
+    }
 
-    expect((rows as { exists_check: string | null }[])[0]?.exists_check).toBeNull();
+    expect(await tableExists()).toBe(false);
 
     await dataSource().runMigrations();
   });
