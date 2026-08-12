@@ -11,48 +11,53 @@ async function run(command: readonly string[]): Promise<{ stdout: string; exitCo
   return { stdout, exitCode };
 }
 
-describe('docker compose', () => {
-  it('a configuração raiz é válida', async () => {
+describe('docker compose — stack de desenvolvimento', () => {
+  it('a configuração é válida', async () => {
     const result = await run(['docker', 'compose', 'config', '--quiet']);
     expect(result.exitCode).toBe(0);
   });
 
-  it('a configuração do profile de teste é válida', async () => {
-    const result = await run(['docker', 'compose', '--profile', 'test', 'config', '--quiet']);
+  it('declara apenas postgres e localstack, com healthcheck', async () => {
+    const result = await run(['docker', 'compose', 'config', '--format', 'json']);
+    const config = JSON.parse(result.stdout) as {
+      services: Record<string, { healthcheck?: unknown }>;
+    };
+
+    expect(Object.keys(config.services).sort()).toEqual(['localstack', 'postgres']);
+    expect(config.services['postgres']?.healthcheck).toBeDefined();
+    expect(config.services['localstack']?.healthcheck).toBeDefined();
+  });
+});
+
+describe('docker compose — stack de teste isolada', () => {
+  const testFlags = ['-f', 'docker-compose.test.yml'];
+
+  it('a configuração é válida isoladamente', async () => {
+    const result = await run(['docker', 'compose', ...testFlags, 'config', '--quiet']);
     expect(result.exitCode).toBe(0);
   });
 
-  it('declara postgres e localstack com healthcheck no profile default', async () => {
-    const result = await run(['docker', 'compose', 'config', '--format', 'json']);
+  it('declara apenas postgres-test e localstack-test, em portas distintas da stack de dev', async () => {
+    const result = await run(['docker', 'compose', ...testFlags, 'config', '--format', 'json']);
     const config = JSON.parse(result.stdout) as {
-      services: Record<string, { healthcheck?: unknown; profiles?: string[] }>;
+      services: Record<string, { ports?: { published: string }[] }>;
     };
 
-    expect(config.services['postgres']?.healthcheck).toBeDefined();
-    expect(config.services['localstack']?.healthcheck).toBeDefined();
-    expect(config.services['postgres']?.profiles).toBeUndefined();
-    expect(config.services['localstack']?.profiles).toBeUndefined();
+    expect(Object.keys(config.services).sort()).toEqual(['localstack-test', 'postgres-test']);
+
+    const devConfig = JSON.parse(
+      (await run(['docker', 'compose', 'config', '--format', 'json'])).stdout,
+    ) as { services: Record<string, { ports?: { published: string }[] }> };
+
+    const testPgPort = config.services['postgres-test']?.ports?.[0]?.published;
+    const devPgPort = devConfig.services['postgres']?.ports?.[0]?.published;
+    expect(testPgPort).not.toBe(devPgPort);
   });
 
-  it('declara postgres-test e localstack-test isolados no profile test', async () => {
-    const result = await run([
-      'docker',
-      'compose',
-      '--profile',
-      'test',
-      'config',
-      '--format',
-      'json',
-    ]);
-    const config = JSON.parse(result.stdout) as {
-      services: Record<string, { profiles?: string[]; ports?: { published: string }[] }>;
-    };
+  it('subir a stack de teste não inicia a stack de dev', async () => {
+    const result = await run(['docker', 'compose', ...testFlags, 'config', '--services']);
+    const services = result.stdout.trim().split('\n').sort();
 
-    expect(config.services['postgres-test']?.profiles).toContain('test');
-    expect(config.services['localstack-test']?.profiles).toContain('test');
-
-    const devPort = config.services['postgres']?.ports?.[0]?.published;
-    const testPort = config.services['postgres-test']?.ports?.[0]?.published;
-    expect(testPort).not.toBe(devPort);
+    expect(services).toEqual(['localstack-test', 'postgres-test']);
   });
 });
