@@ -2,15 +2,16 @@ import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { resolveAppRole } from '@infrastructure/bootstrap/app-role.ts';
 import { selectRoleModule } from '@infrastructure/bootstrap/select-role-module.ts';
+import { loadConfig } from '@infrastructure/config/load-config.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
+  const config = loadConfig(process.env, role);
   const module = selectRoleModule(role);
 
   if (role === 'api') {
     const app = await NestFactory.create(module);
-    const port = Number(process.env['PORT'] ?? 3000);
-    await app.listen(port);
+    await app.listen(config.port);
     return;
   }
 
