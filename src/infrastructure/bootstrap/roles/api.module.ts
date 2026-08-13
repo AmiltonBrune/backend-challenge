@@ -8,15 +8,24 @@ import { TypeOrmOutboxRepository } from '@infrastructure/persistence/repositorie
 import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
+import { loadConfig } from '@infrastructure/config/load-config.ts';
+import type { AppConfig } from '@infrastructure/config/app-config.ts';
+import { TypeOrmDatabaseHealthCheck } from '@infrastructure/health/typeorm-database-health-check.ts';
+import { SqsQueueHealthCheck } from '@infrastructure/health/sqs-queue-health-check.ts';
+import { buildSqsClient } from '@infrastructure/health/build-sqs-client.ts';
 import type { Clock } from '@application/ports/clock.ts';
+import type { DatabaseHealthPort } from '@application/ports/database-health-port.ts';
 import type { IdGenerator } from '@application/ports/id-generator.ts';
 import type { LedgerRepository } from '@application/ports/ledger-repository.ts';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
+import type { QueueHealthPort } from '@application/ports/queue-health-port.ts';
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
 import type { WagerTransactionRepository } from '@application/ports/wager-transaction-repository.ts';
 import type { WalletRepository } from '@application/ports/wallet-repository.ts';
+import { LivenessState } from '@application/health/liveness-state.ts';
 import {
+  CheckReadinessUseCase,
   GetWagerTransactionUseCase,
   GetWalletUseCase,
   ListWalletLedgerUseCase,
@@ -27,20 +36,24 @@ import {
 import { WalletsController } from '@interface/http/controllers/wallets.controller.ts';
 import { WageringController } from '@interface/http/controllers/wagering.controller.ts';
 import { ProvidersController } from '@interface/http/controllers/providers.controller.ts';
+import { HealthController } from '@interface/http/controllers/health.controller.ts';
 import {
+  APP_CONFIG,
   CLOCK,
+  DATABASE_HEALTH_CHECK,
   DATA_SOURCE,
   ID_GENERATOR,
   LEDGER_REPOSITORY,
   OUTBOX_REPOSITORY,
   PROVIDER_IDENTITY,
+  QUEUE_HEALTH_CHECK,
   UNIT_OF_WORK,
   WAGER_TRANSACTION_REPOSITORY,
   WALLET_REPOSITORY,
 } from '../tokens.ts';
 
 @Module({
-  controllers: [WalletsController, WageringController, ProvidersController],
+  controllers: [WalletsController, WageringController, ProvidersController, HealthController],
   providers: [
     {
       provide: DATA_SOURCE,
@@ -55,6 +68,29 @@ import {
     { provide: CLOCK, useClass: SystemClock },
     { provide: ID_GENERATOR, useClass: UuidIdGenerator },
     { provide: PROVIDER_IDENTITY, useClass: DeclaredProviderIdentity },
+    {
+      provide: APP_CONFIG,
+      useFactory: (): AppConfig => loadConfig(process.env, 'api'),
+    },
+    {
+      provide: DATABASE_HEALTH_CHECK,
+      useFactory: (dataSource: DataSource): DatabaseHealthPort => new TypeOrmDatabaseHealthCheck(dataSource),
+      inject: [DATA_SOURCE],
+    },
+    {
+      provide: QUEUE_HEALTH_CHECK,
+      useFactory: (config: AppConfig): QueueHealthPort => new SqsQueueHealthCheck(buildSqsClient(config)),
+      inject: [APP_CONFIG],
+    },
+    LivenessState,
+    {
+      provide: CheckReadinessUseCase,
+      useFactory: (
+        databaseHealth: DatabaseHealthPort,
+        queueHealth: QueueHealthPort,
+      ): CheckReadinessUseCase => new CheckReadinessUseCase(databaseHealth, queueHealth),
+      inject: [DATABASE_HEALTH_CHECK, QUEUE_HEALTH_CHECK],
+    },
     {
       provide: UNIT_OF_WORK,
       useFactory: (dataSource: DataSource): UnitOfWork => new TypeOrmUnitOfWork(dataSource),

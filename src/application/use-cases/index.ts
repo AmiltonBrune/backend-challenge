@@ -19,3 +19,5 @@ export type {
   GetWagerTransactionInput,
   GetWagerTransactionResult,
 } from './get-wager-transaction-use-case.ts';
+export { CheckReadinessUseCase } from './check-readiness-use-case.ts';
+export type { ReadinessChecks, ReadinessResult } from './check-readiness-use-case.ts';

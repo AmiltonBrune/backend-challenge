@@ -6,6 +6,7 @@ import { selectRoleModule } from '@infrastructure/bootstrap/select-role-module.t
 import { loadConfig } from '@infrastructure/config/load-config.ts';
 import { DomainExceptionFilter } from '@interface/http/exceptions/domain-exception-filter.ts';
 import { AuthGuard } from '@interface/http/guards/auth.guard.ts';
+import { LivenessState } from '@application/health/liveness-state.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
@@ -23,6 +24,16 @@ async function bootstrap(): Promise<void> {
     );
     app.useGlobalFilters(new DomainExceptionFilter());
     app.useGlobalGuards(new AuthGuard());
+
+    const livenessState = app.get(LivenessState);
+    process.on('SIGTERM', () => {
+      livenessState.markUnhealthy();
+      app.close().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`falha ao encerrar a aplicação: ${message}`);
+      });
+    });
+
     await app.listen(config.port);
     return;
   }
