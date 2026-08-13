@@ -199,10 +199,15 @@ describeIfDocker('TypeOrmWalletRepository — contra Postgres real', () => {
     });
 
     const order: string[] = [];
+    let resolveFirstLocked: () => void;
+    const firstLocked = new Promise<void>((resolve) => {
+      resolveFirstLocked = resolve;
+    });
 
     const first = uow().run(async (ctx) => {
       const loaded = await repo().findByIdForUpdate(ctx, wallet.id);
       order.push('first-locked');
+      resolveFirstLocked();
       await sleep(200);
       loaded?.credit({
         entryId: crypto.randomUUID(),
@@ -216,7 +221,7 @@ describeIfDocker('TypeOrmWalletRepository — contra Postgres real', () => {
       order.push('first-committed');
     });
 
-    await sleep(50);
+    await firstLocked;
 
     const second = uow().run(async (ctx) => {
       const loaded = await repo().findByIdForUpdate(ctx, wallet.id);
