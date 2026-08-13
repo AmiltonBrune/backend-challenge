@@ -200,4 +200,20 @@ describeIfDocker('TypeOrmLedgerRepository — contra Postgres real', () => {
     const wallet = await insertWallet();
     await expect(uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id))).rejects.toThrow();
   });
+
+  it('retorna um total negativo quando débitos superam créditos, em vez de lançar', async () => {
+    const wallet = await insertWallet();
+    const txId = await insertWagerTransaction(wallet.id, wallet.playerId, 'BET');
+    await dataSource().query(
+      `INSERT INTO wallet_ledger_entries
+         (id, wallet_id, transaction_id, direction, money_amount,
+          balance_before_amount, balance_after_amount, currency, created_at)
+       VALUES (gen_random_uuid(), $1, $2, 'DEBIT', '30.00', '50.00', '20.00', 'BRL', now())`,
+      [wallet.id, txId],
+    );
+
+    const net = await uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id));
+    expect(net.isNegative()).toBe(true);
+    expect(net.toJSON().amount).toBe('-30.00');
+  });
 });

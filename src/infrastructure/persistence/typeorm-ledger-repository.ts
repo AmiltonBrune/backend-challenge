@@ -38,6 +38,11 @@ export class TypeOrmLedgerRepository implements LedgerRepository {
         `LedgerRepository.sumByWalletId: nenhum lançamento encontrado para a wallet ${walletId} — toda wallet aberta tem ao menos o lançamento OPENING.`,
       );
     }
-    return Money.from({ amount: row.net, currency: row.currency });
+    const isNegative = row.net.startsWith('-');
+    const magnitude = Money.from({
+      amount: isNegative ? row.net.slice(1) : row.net,
+      currency: row.currency,
+    });
+    return isNegative ? magnitude.negate() : magnitude;
   }
 }
