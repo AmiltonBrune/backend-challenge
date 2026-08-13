@@ -10,7 +10,7 @@ export interface WagerTransactionProcessedData {
   readonly walletId: string;
   readonly playerId: string;
   readonly roundId: string;
-  readonly gameId?: string;
+  readonly gameId: string;
   readonly kind: WagerTransactionKind;
   readonly money: MoneyProps;
   readonly referenceTransactionId?: string;
