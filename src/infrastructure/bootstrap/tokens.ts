@@ -1,0 +1,9 @@
+export const DATA_SOURCE = Symbol('DataSource');
+export const UNIT_OF_WORK = Symbol('UnitOfWork');
+export const WALLET_REPOSITORY = Symbol('WalletRepository');
+export const WAGER_TRANSACTION_REPOSITORY = Symbol('WagerTransactionRepository');
+export const LEDGER_REPOSITORY = Symbol('LedgerRepository');
+export const OUTBOX_REPOSITORY = Symbol('OutboxRepository');
+export const CLOCK = Symbol('Clock');
+export const ID_GENERATOR = Symbol('IdGenerator');
+export const PROVIDER_IDENTITY = Symbol('ProviderIdentityPort');

@@ -26,7 +26,7 @@ export default tseslint.config(
     settings: {
       'boundaries/root-path': import.meta.dirname,
       'boundaries/elements': layerElements,
-      'boundaries/ignore': ['src/main.ts'],
+      'boundaries/ignore': ['src/main.ts', 'src/infrastructure/bootstrap/roles/**'],
       'import/resolver': {
         typescript: { project: './tsconfig.json' },
       },
