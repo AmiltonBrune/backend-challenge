@@ -323,6 +323,78 @@ describeIfDocker('Superfície HTTP — contra Postgres real', () => {
     expect(body.hasMore).toBe(false);
   });
 
+  it('GET /wallets/:walletId/ledger percorre múltiplas páginas por cursor sem repetir nem pular lançamentos', async () => {
+    const playerId = crypto.randomUUID();
+    const walletResponse = await fetch(`${api()}/wallets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId, initialBalance: { amount: '1000.00', currency: 'BRL' } }),
+    });
+    const { id: walletId } = (await walletResponse.json()) as { id: string };
+
+    for (let index = 0; index < 5; index += 1) {
+      await fetch(`${api()}/wagering/transactions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+        body: JSON.stringify({
+          providerId: 'provider-a',
+          externalTransactionId: crypto.randomUUID(),
+          playerId,
+          walletId,
+          roundId: 'round-1',
+          gameId: 'game-1',
+          kind: 'BET',
+          money: { amount: '10.00', currency: 'BRL' },
+        }),
+      });
+    }
+
+    const collectedIds: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+
+    do {
+      const url = new URL(`${api()}/wallets/${walletId}/ledger`);
+      url.searchParams.set('limit', '2');
+      if (cursor !== undefined) {
+        url.searchParams.set('cursor', cursor);
+      }
+
+      const response = await fetch(url);
+      expect(response.status).toBe(200);
+      const body = (await response.json()) as {
+        entries: { id: string }[];
+        nextCursor: string | undefined;
+        hasMore: boolean;
+      };
+
+      collectedIds.push(...body.entries.map((entry) => entry.id));
+      cursor = body.nextCursor;
+      pages += 1;
+
+      expect(body.hasMore).toBe(cursor !== undefined);
+    } while (cursor !== undefined);
+
+    expect(pages).toBe(3);
+    expect(collectedIds).toHaveLength(6);
+    expect(new Set(collectedIds).size).toBe(6);
+  });
+
+  it('GET /wallets/:walletId/ledger rejeita cursor corrompido com 400 ERR-007', async () => {
+    const playerId = crypto.randomUUID();
+    const walletResponse = await fetch(`${api()}/wallets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId, initialBalance: { amount: '10.00', currency: 'BRL' } }),
+    });
+    const { id: walletId } = (await walletResponse.json()) as { id: string };
+
+    const response = await fetch(`${api()}/wallets/${walletId}/ledger?cursor=lixo-invalido`);
+    expect(response.status).toBe(400);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe('ERR-007');
+  });
+
   it('POST /wallets/:walletId/reconciliation retorna consistent:true', async () => {
     const playerId = crypto.randomUUID();
     const walletResponse = await fetch(`${api()}/wallets`, {
