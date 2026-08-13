@@ -9,6 +9,7 @@ import { AuthGuard } from '@interface/http/guards/auth.guard.ts';
 import { LivenessState } from '@application/health/liveness-state.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
+import { bootstrapConsumer } from '@workers/consumer/bootstrap-consumer.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
@@ -42,6 +43,18 @@ async function bootstrap(): Promise<void> {
 
   if (role === 'consumer' || role === 'worker') {
     await ensureWagerQueues(buildSqsClient(config));
+  }
+
+  if (role === 'consumer') {
+    const consumer = await bootstrapConsumer(config);
+    consumer.start();
+    process.on('SIGTERM', () => {
+      consumer.stop().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`falha ao encerrar o consumer: ${message}`);
+      });
+    });
+    return;
   }
 
   await NestFactory.createApplicationContext(module);
