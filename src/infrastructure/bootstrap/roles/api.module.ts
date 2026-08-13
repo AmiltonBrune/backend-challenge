@@ -12,7 +12,7 @@ import { loadConfig } from '@infrastructure/config/load-config.ts';
 import type { AppConfig } from '@infrastructure/config/app-config.ts';
 import { TypeOrmDatabaseHealthCheck } from '@infrastructure/health/typeorm-database-health-check.ts';
 import { SqsQueueHealthCheck } from '@infrastructure/health/sqs-queue-health-check.ts';
-import { buildSqsClient } from '@infrastructure/health/build-sqs-client.ts';
+import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import type { Clock } from '@application/ports/clock.ts';
 import type { DatabaseHealthPort } from '@application/ports/database-health-port.ts';
 import type { IdGenerator } from '@application/ports/id-generator.ts';
