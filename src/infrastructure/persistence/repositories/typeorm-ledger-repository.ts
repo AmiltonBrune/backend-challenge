@@ -21,27 +21,27 @@ export class TypeOrmLedgerRepository implements LedgerRepository {
     return entity === null ? undefined : WalletLedgerEntryMapper.toDomain(entity);
   }
 
-  async sumByWalletId(ctx: TransactionContext, walletId: string): Promise<Money> {
+  async sumByWalletId(
+    ctx: TransactionContext,
+    walletId: string,
+    currency: string,
+  ): Promise<Money> {
     const manager = ctx as EntityManager;
-    const rows = await manager.query<{ currency: string; net: string }[]>(
-      `SELECT currency,
-              COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN money_amount ELSE 0 END), 0)
+    const rows = await manager.query<{ net: string }[]>(
+      `SELECT COALESCE(SUM(CASE WHEN direction = 'CREDIT' THEN money_amount ELSE 0 END), 0)
             - COALESCE(SUM(CASE WHEN direction = 'DEBIT' THEN money_amount ELSE 0 END), 0) AS net
        FROM wallet_ledger_entries
-       WHERE wallet_id = $1
-       GROUP BY currency`,
+       WHERE wallet_id = $1`,
       [walletId],
     );
     const row = rows[0];
     if (row === undefined) {
-      throw new Error(
-        `LedgerRepository.sumByWalletId: nenhum lançamento encontrado para a wallet ${walletId} — toda wallet aberta tem ao menos o lançamento OPENING.`,
-      );
+      return Money.zero(currency);
     }
     const isNegative = row.net.startsWith('-');
     const magnitude = Money.from({
       amount: isNegative ? row.net.slice(1) : row.net,
-      currency: row.currency,
+      currency,
     });
     return isNegative ? magnitude.negate() : magnitude;
   }

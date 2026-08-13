@@ -8,5 +8,5 @@ export interface LedgerRepository {
     ctx: TransactionContext,
     transactionId: string,
   ): Promise<WalletLedgerEntry | undefined>;
-  sumByWalletId(ctx: TransactionContext, walletId: string): Promise<Money>;
+  sumByWalletId(ctx: TransactionContext, walletId: string, currency: string): Promise<Money>;
 }
