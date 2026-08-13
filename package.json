@@ -33,6 +33,7 @@
     "unrs-resolver"
   ],
   "dependencies": {
+    "@aws-sdk/client-sqs": "^3.1110.0",
     "@nestjs/common": "^11.1.29",
     "@nestjs/core": "^11.1.29",
     "@nestjs/platform-express": "^11.1.29",

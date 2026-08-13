@@ -7,3 +7,6 @@ export const OUTBOX_REPOSITORY = Symbol('OutboxRepository');
 export const CLOCK = Symbol('Clock');
 export const ID_GENERATOR = Symbol('IdGenerator');
 export const PROVIDER_IDENTITY = Symbol('ProviderIdentityPort');
+export const APP_CONFIG = Symbol('AppConfig');
+export const DATABASE_HEALTH_CHECK = Symbol('DatabaseHealthPort');
+export const QUEUE_HEALTH_CHECK = Symbol('QueueHealthPort');
