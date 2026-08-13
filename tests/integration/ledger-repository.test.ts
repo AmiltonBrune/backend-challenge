@@ -92,10 +92,10 @@ describeIfDocker('TypeOrmLedgerRepository — contra Postgres real', () => {
     await runDockerCompose(['up', '-d', '--wait', 'postgres-test']);
     ({ AppDataSource } = await import('@infrastructure/persistence/data-source.ts'));
     const { TypeOrmUnitOfWork } = await import(
-      '@infrastructure/persistence/typeorm-unit-of-work.ts'
+      '@infrastructure/persistence/repositories/typeorm-unit-of-work.ts'
     );
     const { TypeOrmLedgerRepository } = await import(
-      '@infrastructure/persistence/typeorm-ledger-repository.ts'
+      '@infrastructure/persistence/repositories/typeorm-ledger-repository.ts'
     );
     await AppDataSource.initialize();
     await AppDataSource.runMigrations();

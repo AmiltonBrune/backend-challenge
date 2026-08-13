@@ -5,8 +5,8 @@ import { ExternalTransactionConflictError } from '@application/errors/external-t
 import { IdempotencyKeyConflictError } from '@application/errors/idempotency-key-conflict-error.ts';
 import { ReferenceAlreadyReversedError } from '@domain/errors/reference-already-reversed-error.ts';
 import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
-import { WagerTransactionEntity } from './entities/wager-transaction.entity.ts';
-import { WagerTransactionMapper } from './mappers/wager-transaction.mapper.ts';
+import { WagerTransactionEntity } from '../entities/wager-transaction.entity.ts';
+import { WagerTransactionMapper } from '../mappers/wager-transaction.mapper.ts';
 
 const UNIQUE_VIOLATION = '23505';
 

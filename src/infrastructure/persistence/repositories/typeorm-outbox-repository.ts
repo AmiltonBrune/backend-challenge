@@ -2,8 +2,8 @@ import type { EntityManager, QueryDeepPartialEntity } from 'typeorm';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { OutboxMessage } from '@domain/messaging/outbox-message.ts';
-import { OutboxMessageEntity } from './entities/outbox-message.entity.ts';
-import { OutboxMessageMapper } from './mappers/outbox-message.mapper.ts';
+import { OutboxMessageEntity } from '../entities/outbox-message.entity.ts';
+import { OutboxMessageMapper } from '../mappers/outbox-message.mapper.ts';
 
 interface PendingOutboxRow {
   readonly id: string;

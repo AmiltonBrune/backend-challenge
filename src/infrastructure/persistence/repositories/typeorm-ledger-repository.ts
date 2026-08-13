@@ -3,8 +3,8 @@ import type { LedgerRepository } from '@application/ports/ledger-repository.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import { WalletLedgerEntry } from '@domain/ledger/wallet-ledger-entry.ts';
 import { Money } from '@domain/money/money.ts';
-import { WalletLedgerEntryEntity } from './entities/wallet-ledger-entry.entity.ts';
-import { WalletLedgerEntryMapper } from './mappers/wallet-ledger-entry.mapper.ts';
+import { WalletLedgerEntryEntity } from '../entities/wallet-ledger-entry.entity.ts';
+import { WalletLedgerEntryMapper } from '../mappers/wallet-ledger-entry.mapper.ts';
 
 export class TypeOrmLedgerRepository implements LedgerRepository {
   async insert(ctx: TransactionContext, entry: WalletLedgerEntry): Promise<void> {
