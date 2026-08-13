@@ -1,0 +1,258 @@
+### Distributed Wagering Processor — coleção de requisições de exemplo
+###
+### Como usar:
+### 1. Instale a extensão "REST Client" (humao.rest-client) no VS Code, ou abra
+###    este arquivo direto no IntelliJ/WebStorm (suporte nativo a .http).
+### 2. Suba a aplicação e as dependências (Postgres + SQS local) localmente —
+###    veja requests/README.md para o passo a passo completo.
+### 3. As variáveis @walletId, @transactionId, @providerId e @externalTransactionId
+###    abaixo precisam ser preenchidas manualmente com valores retornados pelas
+###    requisições anteriores (o REST Client tem sintaxe de encadeamento via
+###    {{nomeDaRequisicao.response.body.$.campo}}, mas para manter este arquivo
+###    simples e robusto entre editores optamos por variáveis de arquivo: rode a
+###    requisição, copie o valor do campo relevante da resposta e cole abaixo).
+
+@baseUrl = http://localhost:3000
+
+# Cole aqui o "id" retornado pela requisição EP-001 (POST /wallets) do passo 1.
+@walletId = COLE_AQUI_O_WALLET_ID
+
+# Cole aqui o "transactionId" retornado pela requisição EP-004 (POST /wagering/transactions - BET).
+@transactionId = COLE_AQUI_O_TRANSACTION_ID
+
+@providerId = provider-a
+@externalTransactionId = bet-001
+
+
+### ============================================================
+### EP-001 — Criar carteira
+### ============================================================
+
+### 1a. Abrir carteira com saldo inicial ZERO
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+
+{
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "initialBalance": { "amount": "0.00", "currency": "BRL" }
+}
+
+
+### 1b. Abrir carteira com saldo inicial POSITIVO
+### Copie o "id" da resposta para a variável @walletId no topo deste arquivo.
+POST {{baseUrl}}/wallets
+Content-Type: application/json
+
+{
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "initialBalance": { "amount": "1000.00", "currency": "BRL" }
+}
+
+
+### ============================================================
+### EP-002 — Consultar carteira
+### ============================================================
+
+### 2. Consultar carteira pelo id (preencha @walletId com o id do passo 1b)
+GET {{baseUrl}}/wallets/{{walletId}}
+
+
+### ============================================================
+### EP-004 — Submeter operação de aposta
+### ============================================================
+
+### 3a. BET — desconto de saldo. Requer Idempotency-Key.
+### Copie o "transactionId" da resposta para @transactionId no topo do arquivo.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:bet-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "bet-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-987",
+  "gameId": "fortune-chimp",
+  "kind": "BET",
+  "money": { "amount": "25.00", "currency": "BRL" }
+}
+
+
+### 3a-replay. MESMA Idempotency-Key da requisição acima — demonstra o replay
+### idempotente: a resposta deve vir com status 200 (em vez de 201) e
+### "idempotentReplay": true, com o mesmo resultado da primeira chamada.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:bet-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "bet-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-987",
+  "gameId": "fortune-chimp",
+  "kind": "BET",
+  "money": { "amount": "25.00", "currency": "BRL" }
+}
+
+
+### 3b. WIN — crédito de saldo referente à mesma rodada.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:win-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "win-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-987",
+  "gameId": "fortune-chimp",
+  "kind": "WIN",
+  "money": { "amount": "50.00", "currency": "BRL" }
+}
+
+
+### 3c. LOSS — não movimenta saldo, apenas registra a perda declarada pelo provedor.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:loss-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "loss-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-988",
+  "gameId": "fortune-chimp",
+  "kind": "LOSS",
+  "money": { "amount": "10.00", "currency": "BRL" }
+}
+
+
+### 3d. REFUND — referencia a BET anterior (bet-001) via
+### referenceExternalTransactionId. Devolve o valor debitado na BET.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:refund-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "refund-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-987",
+  "gameId": "fortune-chimp",
+  "kind": "REFUND",
+  "money": { "amount": "25.00", "currency": "BRL" },
+  "referenceExternalTransactionId": "bet-001"
+}
+
+
+### 3e. ROLLBACK — referencia o WIN anterior (win-001) via
+### referenceExternalTransactionId. Reverte o crédito aplicado no WIN.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:rollback-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "rollback-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-987",
+  "gameId": "fortune-chimp",
+  "kind": "ROLLBACK",
+  "money": { "amount": "50.00", "currency": "BRL" },
+  "referenceExternalTransactionId": "win-001"
+}
+
+
+### 3f. BET com saldo insuficiente — demonstra 422 com
+### failureCode: INSUFFICIENT_FUNDS. Use uma carteira com saldo baixo/zerado
+### (ex.: a carteira criada no passo 1a) ou um valor maior que o saldo disponível.
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:bet-insufficient-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "bet-insufficient-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-999",
+  "gameId": "fortune-chimp",
+  "kind": "BET",
+  "money": { "amount": "999999.00", "currency": "BRL" }
+}
+
+
+### 3g. REFUND sem a BET referenciada ainda existir — demonstra 202
+### PENDING_REFERENCE (a operação fica retida aguardando a chegada da
+### referência, sem que o provedor precise reenviar).
+POST {{baseUrl}}/wagering/transactions
+Content-Type: application/json
+Idempotency-Key: provider-a:refund-pending-001
+
+{
+  "providerId": "provider-a",
+  "externalTransactionId": "refund-pending-001",
+  "playerId": "0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1",
+  "walletId": "{{walletId}}",
+  "roundId": "round-777",
+  "gameId": "fortune-chimp",
+  "kind": "REFUND",
+  "money": { "amount": "15.00", "currency": "BRL" },
+  "referenceExternalTransactionId": "bet-que-ainda-nao-chegou"
+}
+
+
+### ============================================================
+### EP-005 / EP-006 — Consultar operação
+### ============================================================
+
+### 4a. Consultar operação pelo identificador interno (preencha @transactionId
+### com o transactionId retornado no passo 3a).
+GET {{baseUrl}}/wagering/transactions/{{transactionId}}
+
+
+### 4b. Consultar operação pelo identificador do provedor + id externo
+### (usa @providerId e @externalTransactionId definidos no topo do arquivo,
+### apontando para a BET do passo 3a).
+GET {{baseUrl}}/providers/{{providerId}}/wagering/transactions/{{externalTransactionId}}
+
+
+### ============================================================
+### EP-003 — Consultar histórico (ledger) da carteira
+### ============================================================
+
+### 5a. Histórico sem parâmetros (usa o limite padrão do servidor)
+GET {{baseUrl}}/wallets/{{walletId}}/ledger
+
+
+### 5b. Histórico com cursor e limit — use o "nextCursor" retornado pela
+### resposta anterior para paginar.
+GET {{baseUrl}}/wallets/{{walletId}}/ledger?limit=2&cursor=COLE_AQUI_O_NEXT_CURSOR
+
+
+### ============================================================
+### EP-007 — Reconciliar carteira
+### ============================================================
+
+### 6. Compara o saldo materializado com o saldo recalculado a partir do
+### histórico de lançamentos.
+POST {{baseUrl}}/wallets/{{walletId}}/reconciliation
+
+
+### ============================================================
+### EP-008 / EP-009 — Health checks
+### ============================================================
+
+### 7a. Vivacidade (liveness) — sem autenticação
+GET {{baseUrl}}/health/live
+
+
+### 7b. Prontidão (readiness) — verifica dependências (banco, fila)
+GET {{baseUrl}}/health/ready
