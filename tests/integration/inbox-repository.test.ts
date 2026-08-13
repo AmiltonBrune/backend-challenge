@@ -158,4 +158,30 @@ describeIfDocker('TypeOrmInboxRepository — contra Postgres real', () => {
     expect(resultC).toBe('inserted');
     expect(resultD).toBe('inserted');
   });
+
+  it('mantém a transação utilizável após um insert duplicado, sem abortar o restante da unidade de trabalho', async () => {
+    const messageId = crypto.randomUUID();
+    const first = InboxMessage.receive({
+      messageId,
+      consumerName: 'consumer-e',
+      payloadHash: 'hash-e',
+    });
+    const replay = InboxMessage.receive({
+      messageId,
+      consumerName: 'consumer-e',
+      payloadHash: 'hash-e',
+    });
+
+    await uow().run((ctx) => repo().insert(ctx, first));
+
+    const outcome = await uow().run(async (ctx) => {
+      const result = await repo().insert(ctx, replay);
+      const manager = ctx as import('typeorm').EntityManager;
+      const rows = await manager.query('SELECT 1 AS ok');
+      return { result, probe: (rows as { ok: number }[])[0]?.ok };
+    });
+
+    expect(outcome.result).toBe('already-processed');
+    expect(outcome.probe).toBe(1);
+  });
 });
