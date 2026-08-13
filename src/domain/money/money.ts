@@ -2,7 +2,7 @@ import { Decimal } from 'decimal.js';
 import { CurrencyMismatchError } from '../errors/currency-mismatch-error.ts';
 import type { MoneyProps } from './money-props.ts';
 
-const AMOUNT_PATTERN = /^\d{1,17}(\.\d{1,2})?$/;
+export const MONEY_AMOUNT_PATTERN = /^\d{1,17}(\.\d{1,2})?$/;
 
 export class Money {
   private constructor(
@@ -14,7 +14,7 @@ export class Money {
     if (props.currency === '') {
       throw new Error('Money: currency não pode ser vazia.');
     }
-    if (!AMOUNT_PATTERN.test(props.amount)) {
+    if (!MONEY_AMOUNT_PATTERN.test(props.amount)) {
       throw new Error(
         `Money: amount "${props.amount}" inválido — esperado decimal não negativo, até 17 dígitos inteiros e até 2 casas decimais.`,
       );
