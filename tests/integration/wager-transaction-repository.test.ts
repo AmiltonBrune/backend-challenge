@@ -152,7 +152,7 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
     const walletId = await insertWallet();
     const transaction = buildBet({ walletId });
 
-    await uow().run((ctx) => repo().insert(ctx, transaction));
+    await uow().run((ctx) => repo().insert(ctx, transaction, null));
 
     const found = await uow().run((ctx) => repo().findById(ctx, transaction.id));
     expect(found?.id).toBe(transaction.id);
@@ -169,7 +169,7 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
   it('encontra por providerId e idempotencyKey', async () => {
     const walletId = await insertWallet();
     const transaction = buildBet({ walletId, providerId: 'provider-b' });
-    await uow().run((ctx) => repo().insert(ctx, transaction));
+    await uow().run((ctx) => repo().insert(ctx, transaction, null));
 
     const found = await uow().run((ctx) =>
       repo().findByProviderAndIdempotencyKey(ctx, 'provider-b', transaction.idempotencyKey),
@@ -185,7 +185,7 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
   it('encontra por providerId e externalTransactionId', async () => {
     const walletId = await insertWallet();
     const transaction = buildBet({ walletId, providerId: 'provider-c' });
-    await uow().run((ctx) => repo().insert(ctx, transaction));
+    await uow().run((ctx) => repo().insert(ctx, transaction, null));
 
     const found = await uow().run((ctx) =>
       repo().findByProviderAndExternalTransactionId(
@@ -200,7 +200,7 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
   it('persiste transição de estado feita por update', async () => {
     const walletId = await insertWallet();
     const transaction = buildBet({ walletId });
-    await uow().run((ctx) => repo().insert(ctx, transaction));
+    await uow().run((ctx) => repo().insert(ctx, transaction, null));
 
     const at = new Date();
     transaction.markProcessed(undefined, at);
@@ -214,7 +214,7 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
   it('persiste rejeição com failureCode', async () => {
     const walletId = await insertWallet();
     const transaction = buildBet({ walletId });
-    await uow().run((ctx) => repo().insert(ctx, transaction));
+    await uow().run((ctx) => repo().insert(ctx, transaction, null));
 
     transaction.reject(FailureCode.INSUFFICIENT_FUNDS);
     await uow().run((ctx) => repo().update(ctx, transaction));
@@ -228,11 +228,11 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
     const walletId = await insertWallet();
     const idempotencyKey = crypto.randomUUID();
     const first = buildBet({ walletId, providerId: 'provider-d', idempotencyKey });
-    await uow().run((ctx) => repo().insert(ctx, first));
+    await uow().run((ctx) => repo().insert(ctx, first, null));
 
     const second = buildBet({ walletId, providerId: 'provider-d', idempotencyKey });
 
-    await expect(uow().run((ctx) => repo().insert(ctx, second))).rejects.toThrow(
+    await expect(uow().run((ctx) => repo().insert(ctx, second, null))).rejects.toThrow(
       IdempotencyKeyConflictError,
     );
   });
@@ -241,11 +241,11 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
     const walletId = await insertWallet();
     const externalTransactionId = crypto.randomUUID();
     const first = buildBet({ walletId, providerId: 'provider-e', externalTransactionId });
-    await uow().run((ctx) => repo().insert(ctx, first));
+    await uow().run((ctx) => repo().insert(ctx, first, null));
 
     const second = buildBet({ walletId, providerId: 'provider-e', externalTransactionId });
 
-    await expect(uow().run((ctx) => repo().insert(ctx, second))).rejects.toThrow(
+    await expect(uow().run((ctx) => repo().insert(ctx, second, null))).rejects.toThrow(
       ExternalTransactionConflictError,
     );
   });
@@ -283,7 +283,7 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
       createdAt: new Date(),
     });
 
-    await expect(uow().run((ctx) => repo().insert(ctx, secondRefund))).rejects.toThrow(
+    await expect(uow().run((ctx) => repo().insert(ctx, secondRefund, null))).rejects.toThrow(
       ReferenceAlreadyReversedError,
     );
   });
@@ -330,8 +330,8 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
       createdAt: new Date(),
     });
 
-    await uow().run((ctx) => repo().insert(ctx, firstRefund));
-    await uow().run((ctx) => repo().insert(ctx, secondRefund));
+    await uow().run((ctx) => repo().insert(ctx, firstRefund, null));
+    await uow().run((ctx) => repo().insert(ctx, secondRefund, null));
 
     firstRefund.markProcessed(referenceTransactionId, new Date());
     await uow().run((ctx) => repo().update(ctx, firstRefund));

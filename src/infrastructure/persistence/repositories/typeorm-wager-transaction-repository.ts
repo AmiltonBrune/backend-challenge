@@ -30,9 +30,13 @@ function translateUniqueViolation(error: unknown, transaction: WagerTransaction)
 }
 
 export class TypeOrmWagerTransactionRepository implements WagerTransactionRepository {
-  async insert(ctx: TransactionContext, transaction: WagerTransaction): Promise<void> {
+  async insert(
+    ctx: TransactionContext,
+    transaction: WagerTransaction,
+    gameId: string | null,
+  ): Promise<void> {
     const manager = ctx as EntityManager;
-    const entity = WagerTransactionMapper.toEntity(transaction, null);
+    const entity = WagerTransactionMapper.toEntity(transaction, gameId);
 
     try {
       await manager.insert(WagerTransactionEntity, entity);
