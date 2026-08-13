@@ -7,6 +7,8 @@ import { loadConfig } from '@infrastructure/config/load-config.ts';
 import { DomainExceptionFilter } from '@interface/http/exceptions/domain-exception-filter.ts';
 import { AuthGuard } from '@interface/http/guards/auth.guard.ts';
 import { LivenessState } from '@application/health/liveness-state.ts';
+import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
+import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
@@ -36,6 +38,10 @@ async function bootstrap(): Promise<void> {
 
     await app.listen(config.port);
     return;
+  }
+
+  if (role === 'consumer' || role === 'worker') {
+    await ensureWagerQueues(buildSqsClient(config));
   }
 
   await NestFactory.createApplicationContext(module);
