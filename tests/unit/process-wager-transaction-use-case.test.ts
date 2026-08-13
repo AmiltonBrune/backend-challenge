@@ -15,7 +15,7 @@ import type { WalletLedgerEntry } from '@domain/ledger/wallet-ledger-entry.ts';
 import { Money } from '@domain/money/money.ts';
 import type { OutboxMessage } from '@domain/messaging/outbox-message.ts';
 import { Wallet } from '@domain/wallet/wallet.ts';
-import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
+import { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
 import { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
@@ -90,8 +90,27 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
     return undefined;
   }
 
-  async findByProviderAndExternalTransactionId(): Promise<WagerTransaction | undefined> {
-    return undefined;
+  async findByProviderAndExternalTransactionId(
+    _ctx: TransactionContext,
+    providerId: string,
+    externalTransactionId: string,
+  ): Promise<WagerTransaction | undefined> {
+    return [...this.store.values()].find(
+      (t) => t.providerId === providerId && t.externalTransactionId === externalTransactionId,
+    );
+  }
+
+  async findProcessedReversalByReference(
+    _ctx: TransactionContext,
+    referenceTransactionId: string,
+    kind: WagerTransactionKind,
+  ): Promise<WagerTransaction | undefined> {
+    return [...this.store.values()].find(
+      (t) =>
+        t.referenceTransactionId() === referenceTransactionId &&
+        t.kind === kind &&
+        t.status() === WagerTransactionStatus.PROCESSED,
+    );
   }
 }
 
@@ -340,18 +359,327 @@ describe('ProcessWagerTransactionUseCase — validações', () => {
     expect(outboxRepository.store).toHaveLength(0);
   });
 
-  it('lança para REFUND, ainda não suportado por este caso de uso', async () => {
-    const { useCase, wagerTransactionRepository } = buildUseCase();
+});
 
-    await expect(
-      useCase.execute(
-        baseInput({
-          kind: WagerTransactionKind.REFUND,
-          referenceExternalTransactionId: 'ext-bet-1',
-        }),
-      ),
-    ).rejects.toThrow();
+function seedProcessedReference(
+  wagerTransactionRepository: InMemoryWagerTransactionRepository,
+  overrides: Partial<{
+    id: string;
+    externalTransactionId: string;
+    kind: WagerTransactionKind;
+    providerId: string;
+    playerId: string;
+    walletId: string;
+    roundId: string;
+    money: { amount: string; currency: string };
+  }> = {},
+): WagerTransaction {
+  const reference = WagerTransaction.rehydrate({
+    id: overrides.id ?? 'ref-tx-1',
+    providerId: overrides.providerId ?? 'provider-a',
+    externalTransactionId: overrides.externalTransactionId ?? 'ext-bet-1',
+    idempotencyKey: 'idem-ref-1',
+    payloadHash: 'hash',
+    walletId: overrides.walletId ?? 'wallet-1',
+    playerId: overrides.playerId ?? 'player-1',
+    roundId: overrides.roundId ?? 'round-1',
+    kind: overrides.kind ?? WagerTransactionKind.BET,
+    money: Money.from(overrides.money ?? { amount: '25.00', currency: 'BRL' }),
+    status: WagerTransactionStatus.PROCESSED,
+    processedAt: new Date('2026-08-13T00:00:00.000Z'),
+    createdAt: new Date('2026-08-13T00:00:00.000Z'),
+  });
+  wagerTransactionRepository.store.set(reference.id, reference);
+  return reference;
+}
 
-    expect(wagerTransactionRepository.store.size).toBe(0);
+describe('ProcessWagerTransactionUseCase — REFUND', () => {
+  it('credita de volta e resolve a referência quando o BET referenciado está PROCESSED', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository, ledgerRepository, outboxRepository } =
+      buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '75.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository);
+
+    const result = await useCase.execute(
+      baseInput({
+        kind: WagerTransactionKind.REFUND,
+        referenceExternalTransactionId: 'ext-bet-1',
+      }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(result.balance?.amount).toBe('100.00');
+    expect(ledgerRepository.store[0]?.direction).toBe(LedgerDirection.CREDIT);
+
+    const persisted = [...wagerTransactionRepository.store.values()].find(
+      (t) => t.id === result.transactionId,
+    );
+    expect(persisted?.referenceTransactionId()).toBe('ref-tx-1');
+    expect(outboxRepository.store).toHaveLength(2);
+  });
+
+  it('retorna PENDING_REFERENCE quando a referência ainda não chegou', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository, outboxRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+
+    const result = await useCase.execute(
+      baseInput({
+        kind: WagerTransactionKind.REFUND,
+        referenceExternalTransactionId: 'ext-bet-inexistente',
+      }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.PENDING_REFERENCE);
+    const persisted = [...wagerTransactionRepository.store.values()].find(
+      (t) => t.id === result.transactionId,
+    );
+    expect(persisted?.status()).toBe(WagerTransactionStatus.PENDING_REFERENCE);
+    expect(outboxRepository.store).toHaveLength(1);
+    expect(outboxRepository.store[0]?.eventType).toBe('WagerTransactionPendingReference');
+  });
+
+  it('rejeita REFERENCE_NOT_PROCESSED quando a referência não está PROCESSED', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    const reference = WagerTransaction.rehydrate({
+      id: 'ref-tx-1',
+      providerId: 'provider-a',
+      externalTransactionId: 'ext-bet-1',
+      idempotencyKey: 'idem-ref-1',
+      payloadHash: 'hash',
+      walletId: 'wallet-1',
+      playerId: 'player-1',
+      roundId: 'round-1',
+      kind: WagerTransactionKind.BET,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      status: WagerTransactionStatus.PENDING,
+      createdAt: new Date(),
+    });
+    wagerTransactionRepository.store.set(reference.id, reference);
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.REFUND, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_NOT_PROCESSED);
+  });
+
+  it('rejeita REFERENCE_KIND_NOT_REVERSIBLE quando a referência não é um BET', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { kind: WagerTransactionKind.WIN });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.REFUND, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_KIND_NOT_REVERSIBLE);
+  });
+
+  it('rejeita REFERENCE_AMOUNT_MISMATCH quando o valor diverge do BET', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { money: { amount: '30.00', currency: 'BRL' } });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.REFUND, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_AMOUNT_MISMATCH);
+  });
+
+  it('rejeita REFERENCE_CONTEXT_MISMATCH quando a rodada diverge', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { roundId: 'round-outro' });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.REFUND, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_CONTEXT_MISMATCH);
+  });
+
+  it('rejeita REFERENCE_ALREADY_REVERSED numa segunda tentativa de REFUND para a mesma referência', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    const reference = seedProcessedReference(wagerTransactionRepository);
+    const firstRefund = WagerTransaction.rehydrate({
+      id: 'refund-1',
+      providerId: 'provider-a',
+      externalTransactionId: 'ext-refund-1',
+      idempotencyKey: 'idem-refund-1',
+      payloadHash: 'hash',
+      walletId: 'wallet-1',
+      playerId: 'player-1',
+      roundId: 'round-1',
+      kind: WagerTransactionKind.REFUND,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      referenceExternalTransactionId: 'ext-bet-1',
+      referenceTransactionId: reference.id,
+      status: WagerTransactionStatus.PROCESSED,
+      processedAt: new Date(),
+      createdAt: new Date(),
+    });
+    wagerTransactionRepository.store.set(firstRefund.id, firstRefund);
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.REFUND, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_ALREADY_REVERSED);
+  });
+});
+
+describe('ProcessWagerTransactionUseCase — ROLLBACK', () => {
+  it('inverte a direção de um BET (DEBIT vira CREDIT)', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository, ledgerRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '75.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { kind: WagerTransactionKind.BET });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.ROLLBACK, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(result.balance?.amount).toBe('100.00');
+    expect(ledgerRepository.store[0]?.direction).toBe(LedgerDirection.CREDIT);
+  });
+
+  it('inverte a direção de um WIN (CREDIT vira DEBIT)', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository, ledgerRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { kind: WagerTransactionKind.WIN });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.ROLLBACK, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(result.balance?.amount).toBe('75.00');
+    expect(ledgerRepository.store[0]?.direction).toBe(LedgerDirection.DEBIT);
+  });
+
+  it('rejeita REVERSAL_WOULD_OVERDRAW quando reverter um WIN já consumido deixaria saldo negativo', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository, ledgerRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '5.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { kind: WagerTransactionKind.WIN });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.ROLLBACK, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REVERSAL_WOULD_OVERDRAW);
+    expect(ledgerRepository.store).toHaveLength(0);
+
+    const wallet = walletRepository.store.get('wallet-1');
+    expect(wallet?.balance().toJSON().amount).toBe('5.00');
+  });
+
+  it('rejeita REFERENCE_KIND_NOT_REVERSIBLE ao tentar reverter uma LOSS', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository, { kind: WagerTransactionKind.LOSS });
+
+    const result = await useCase.execute(
+      baseInput({ kind: WagerTransactionKind.ROLLBACK, referenceExternalTransactionId: 'ext-bet-1' }),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_KIND_NOT_REVERSIBLE);
   });
 });

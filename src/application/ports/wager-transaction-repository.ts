@@ -1,4 +1,5 @@
 import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
+import type { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import type { TransactionContext } from './transaction-context.ts';
 
 export interface WagerTransactionRepository {
@@ -14,5 +15,10 @@ export interface WagerTransactionRepository {
     ctx: TransactionContext,
     providerId: string,
     externalTransactionId: string,
+  ): Promise<WagerTransaction | undefined>;
+  findProcessedReversalByReference(
+    ctx: TransactionContext,
+    referenceTransactionId: string,
+    kind: WagerTransactionKind,
   ): Promise<WagerTransaction | undefined>;
 }

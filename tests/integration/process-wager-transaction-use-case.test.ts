@@ -297,4 +297,173 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
     );
     expect(txRows).toHaveLength(1);
   });
+
+  it('REFUND credita de volta um BET processado e resolve reference_transaction_id', async () => {
+    const wallet = await insertWallet('100.00');
+    const betExternalId = crypto.randomUUID();
+
+    await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: betExternalId,
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.BET,
+      money: { amount: '25.00', currency: 'BRL' },
+    });
+
+    const refund = await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.REFUND,
+      money: { amount: '25.00', currency: 'BRL' },
+      referenceExternalTransactionId: betExternalId,
+    });
+
+    expect(refund.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(refund.balance?.amount).toBe('100.00');
+
+    const txRows = await dataSource().query(
+      `SELECT reference_transaction_id FROM wager_transactions WHERE id = $1`,
+      [refund.transactionId],
+    );
+    expect((txRows as { reference_transaction_id: string | null }[])[0]?.reference_transaction_id).not.toBeNull();
+  });
+
+  it('retorna PENDING_REFERENCE quando a referência ainda não chegou', async () => {
+    const wallet = await insertWallet('100.00');
+
+    const result = await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.REFUND,
+      money: { amount: '25.00', currency: 'BRL' },
+      referenceExternalTransactionId: crypto.randomUUID(),
+    });
+
+    expect(result.status).toBe(WagerTransactionStatus.PENDING_REFERENCE);
+
+    const txRows = await dataSource().query(
+      `SELECT status FROM wager_transactions WHERE id = $1`,
+      [result.transactionId],
+    );
+    expect((txRows as { status: string }[])[0]?.status).toBe('PENDING_REFERENCE');
+
+    const outboxRows = await dataSource().query(
+      `SELECT event_type FROM outbox_messages WHERE aggregate_id = $1`,
+      [result.transactionId],
+    );
+    expect((outboxRows as { event_type: string }[]).map((r) => r.event_type)).toEqual([
+      'WagerTransactionPendingReference',
+    ]);
+  });
+
+  it('ROLLBACK de um WIN já consumido rejeita com REVERSAL_WOULD_OVERDRAW', async () => {
+    const wallet = await insertWallet('0.00');
+    const winExternalId = crypto.randomUUID();
+
+    await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: winExternalId,
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.WIN,
+      money: { amount: '50.00', currency: 'BRL' },
+    });
+
+    await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.BET,
+      money: { amount: '50.00', currency: 'BRL' },
+    });
+
+    const rollback = await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.ROLLBACK,
+      money: { amount: '50.00', currency: 'BRL' },
+      referenceExternalTransactionId: winExternalId,
+    });
+
+    expect(rollback.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(rollback.failureCode).toBe(FailureCode.REVERSAL_WOULD_OVERDRAW);
+
+    const walletRows = await dataSource().query(
+      `SELECT balance_amount FROM wallets WHERE id = $1`,
+      [wallet.id],
+    );
+    expect((walletRows as { balance_amount: string }[])[0]?.balance_amount).toBe('0.00');
+  });
+
+  it('uma segunda tentativa de REFUND para a mesma referência é rejeitada com REFERENCE_ALREADY_REVERSED', async () => {
+    const wallet = await insertWallet('100.00');
+    const betExternalId = crypto.randomUUID();
+
+    await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: betExternalId,
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.BET,
+      money: { amount: '25.00', currency: 'BRL' },
+    });
+
+    await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.REFUND,
+      money: { amount: '25.00', currency: 'BRL' },
+      referenceExternalTransactionId: betExternalId,
+    });
+
+    const secondRefund = await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.REFUND,
+      money: { amount: '25.00', currency: 'BRL' },
+      referenceExternalTransactionId: betExternalId,
+    });
+
+    expect(secondRefund.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(secondRefund.failureCode).toBe(FailureCode.REFERENCE_ALREADY_REVERSED);
+  });
 });

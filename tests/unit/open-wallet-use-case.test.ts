@@ -98,6 +98,10 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
   async findByProviderAndExternalTransactionId(): Promise<WagerTransaction | undefined> {
     return undefined;
   }
+
+  async findProcessedReversalByReference(): Promise<WagerTransaction | undefined> {
+    return undefined;
+  }
 }
 
 class InMemoryLedgerRepository implements LedgerRepository {

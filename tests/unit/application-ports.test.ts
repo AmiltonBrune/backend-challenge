@@ -3,6 +3,7 @@ import { Money } from '@domain/money/money.ts';
 import { Wallet } from '@domain/wallet/wallet.ts';
 import { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
+import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { LedgerDirection } from '@domain/ledger/ledger-direction.ts';
 import { WalletLedgerEntry } from '@domain/ledger/wallet-ledger-entry.ts';
 import { InboxMessage } from '@domain/messaging/inbox-message.ts';
@@ -89,6 +90,14 @@ describe('portas de repositório e serviço — implementabilidade', () => {
       async findByProviderAndExternalTransactionId(_ctx, providerId, externalTransactionId) {
         return [...store.values()].find(
           (t) => t.providerId === providerId && t.externalTransactionId === externalTransactionId,
+        );
+      },
+      async findProcessedReversalByReference(_ctx, referenceTransactionId, kind) {
+        return [...store.values()].find(
+          (t) =>
+            t.referenceTransactionId() === referenceTransactionId &&
+            t.kind === kind &&
+            t.status() === WagerTransactionStatus.PROCESSED,
         );
       },
     };
