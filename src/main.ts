@@ -5,6 +5,7 @@ import { resolveAppRole } from '@infrastructure/bootstrap/app-role.ts';
 import { selectRoleModule } from '@infrastructure/bootstrap/select-role-module.ts';
 import { loadConfig } from '@infrastructure/config/load-config.ts';
 import { DomainExceptionFilter } from '@interface/http/exceptions/domain-exception-filter.ts';
+import { AuthGuard } from '@interface/http/guards/auth.guard.ts';
 import { LivenessState } from '@application/health/liveness-state.ts';
 
 async function bootstrap(): Promise<void> {
@@ -22,6 +23,7 @@ async function bootstrap(): Promise<void> {
       }),
     );
     app.useGlobalFilters(new DomainExceptionFilter());
+    app.useGlobalGuards(new AuthGuard());
 
     const livenessState = app.get(LivenessState);
     process.on('SIGTERM', () => {
