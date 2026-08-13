@@ -106,7 +106,7 @@ describe('portas de repositório e serviço — implementabilidade', () => {
       money: Money.from({ amount: '25.00', currency: 'BRL' }),
       createdAt: new Date(),
     });
-    await repo.insert(undefined, tx);
+    await repo.insert(undefined, tx, 'game-1');
 
     expect(await repo.findById(undefined, 'tx1')).toBe(tx);
     expect(await repo.findByProviderAndIdempotencyKey(undefined, 'provider-a', 'idem-1')).toBe(tx);

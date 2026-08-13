@@ -103,7 +103,7 @@ export class OpenWalletUseCase {
           createdAt: now,
         });
 
-        await this.wagerTransactionRepository.insert(ctx, openingTransaction);
+        await this.wagerTransactionRepository.insert(ctx, openingTransaction, null);
         await this.ledgerRepository.insert(ctx, entry);
 
         events.push(
