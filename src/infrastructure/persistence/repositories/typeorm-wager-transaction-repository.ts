@@ -5,6 +5,8 @@ import { ExternalTransactionConflictError } from '@application/errors/external-t
 import { IdempotencyKeyConflictError } from '@application/errors/idempotency-key-conflict-error.ts';
 import { ReferenceAlreadyReversedError } from '@domain/errors/reference-already-reversed-error.ts';
 import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
+import type { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
+import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { WagerTransactionEntity } from '../entities/wager-transaction.entity.ts';
 import { WagerTransactionMapper } from '../mappers/wager-transaction.mapper.ts';
 import { constraintNameOf } from './unique-violation.ts';
@@ -89,6 +91,18 @@ export class TypeOrmWagerTransactionRepository implements WagerTransactionReposi
     const manager = ctx as EntityManager;
     const entity = await manager.findOne(WagerTransactionEntity, {
       where: { providerId, externalTransactionId },
+    });
+    return entity === null ? undefined : WagerTransactionMapper.toDomain(entity);
+  }
+
+  async findProcessedReversalByReference(
+    ctx: TransactionContext,
+    referenceTransactionId: string,
+    kind: WagerTransactionKind,
+  ): Promise<WagerTransaction | undefined> {
+    const manager = ctx as EntityManager;
+    const entity = await manager.findOne(WagerTransactionEntity, {
+      where: { referenceTransactionId, kind, status: WagerTransactionStatus.PROCESSED },
     });
     return entity === null ? undefined : WagerTransactionMapper.toDomain(entity);
   }
