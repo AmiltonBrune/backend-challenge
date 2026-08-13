@@ -21,6 +21,26 @@ function constraintNameOf(error: unknown): string | undefined {
   return driverError.constraint;
 }
 
+function translateUniqueViolation(error: unknown, transaction: WagerTransaction): never {
+  const constraint = constraintNameOf(error);
+  switch (constraint) {
+    case 'uq_tx_provider_idempotency':
+      throw new IdempotencyKeyConflictError(transaction.providerId, transaction.idempotencyKey);
+    case 'uq_tx_provider_external':
+      throw new ExternalTransactionConflictError(
+        transaction.providerId,
+        transaction.externalTransactionId,
+      );
+    case 'uq_reversal_per_reference':
+      throw new ReferenceAlreadyReversedError(
+        transaction.referenceExternalTransactionId ?? transaction.externalTransactionId,
+        transaction.kind,
+      );
+    default:
+      throw error;
+  }
+}
+
 export class TypeOrmWagerTransactionRepository implements WagerTransactionRepository {
   async insert(ctx: TransactionContext, transaction: WagerTransaction): Promise<void> {
     const manager = ctx as EntityManager;
@@ -29,38 +49,26 @@ export class TypeOrmWagerTransactionRepository implements WagerTransactionReposi
     try {
       await manager.insert(WagerTransactionEntity, entity);
     } catch (error) {
-      const constraint = constraintNameOf(error);
-      switch (constraint) {
-        case 'uq_tx_provider_idempotency':
-          throw new IdempotencyKeyConflictError(transaction.providerId, transaction.idempotencyKey);
-        case 'uq_tx_provider_external':
-          throw new ExternalTransactionConflictError(
-            transaction.providerId,
-            transaction.externalTransactionId,
-          );
-        case 'uq_reversal_per_reference':
-          throw new ReferenceAlreadyReversedError(
-            transaction.referenceExternalTransactionId ?? transaction.externalTransactionId,
-            transaction.kind,
-          );
-        default:
-          throw error;
-      }
+      translateUniqueViolation(error, transaction);
     }
   }
 
   async update(ctx: TransactionContext, transaction: WagerTransaction): Promise<void> {
     const manager = ctx as EntityManager;
-    await manager.update(
-      WagerTransactionEntity,
-      { id: transaction.id },
-      {
-        status: transaction.status(),
-        failureCode: transaction.failureCode() ?? null,
-        referenceTransactionId: transaction.referenceTransactionId() ?? null,
-        processedAt: transaction.processedAt() ?? null,
-      },
-    );
+    try {
+      await manager.update(
+        WagerTransactionEntity,
+        { id: transaction.id },
+        {
+          status: transaction.status(),
+          failureCode: transaction.failureCode() ?? null,
+          referenceTransactionId: transaction.referenceTransactionId() ?? null,
+          processedAt: transaction.processedAt() ?? null,
+        },
+      );
+    } catch (error) {
+      translateUniqueViolation(error, transaction);
+    }
   }
 
   async findById(ctx: TransactionContext, id: string): Promise<WagerTransaction | undefined> {

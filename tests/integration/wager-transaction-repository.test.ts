@@ -287,4 +287,58 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
       ReferenceAlreadyReversedError,
     );
   });
+
+  it('traduz 23505 de uq_reversal_per_reference no caminho normal PENDING → PROCESSED via update', async () => {
+    const walletId = await insertWallet();
+    const playerId = crypto.randomUUID();
+    const referenceRows = await dataSource().query(
+      `INSERT INTO wager_transactions
+         (id, provider_id, external_transaction_id, idempotency_key, payload_hash,
+          wallet_id, player_id, round_id, kind, money_amount, money_currency, status, created_at)
+       VALUES (gen_random_uuid(), 'provider-g', $1, $2, 'hash', $3, $4, 'round-1', 'BET', '25.00', 'BRL', 'PROCESSED', now())
+       RETURNING id`,
+      [crypto.randomUUID(), crypto.randomUUID(), walletId, playerId],
+    );
+    const referenceTransactionId = (referenceRows as { id: string }[])[0]!.id;
+
+    const firstRefund = WagerTransaction.create({
+      id: crypto.randomUUID(),
+      providerId: 'provider-g',
+      externalTransactionId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
+      payloadHash: 'hash',
+      walletId,
+      playerId,
+      roundId: 'round-1',
+      kind: WagerTransactionKind.REFUND,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      referenceExternalTransactionId: 'ext-ref-g',
+      createdAt: new Date(),
+    });
+    const secondRefund = WagerTransaction.create({
+      id: crypto.randomUUID(),
+      providerId: 'provider-g',
+      externalTransactionId: crypto.randomUUID(),
+      idempotencyKey: crypto.randomUUID(),
+      payloadHash: 'hash',
+      walletId,
+      playerId,
+      roundId: 'round-1',
+      kind: WagerTransactionKind.REFUND,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      referenceExternalTransactionId: 'ext-ref-g',
+      createdAt: new Date(),
+    });
+
+    await uow().run((ctx) => repo().insert(ctx, firstRefund));
+    await uow().run((ctx) => repo().insert(ctx, secondRefund));
+
+    firstRefund.markProcessed(referenceTransactionId, new Date());
+    await uow().run((ctx) => repo().update(ctx, firstRefund));
+
+    secondRefund.markProcessed(referenceTransactionId, new Date());
+    await expect(uow().run((ctx) => repo().update(ctx, secondRefund))).rejects.toThrow(
+      ReferenceAlreadyReversedError,
+    );
+  });
 });
