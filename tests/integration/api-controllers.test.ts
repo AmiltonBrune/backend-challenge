@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import type { INestApplication } from '@nestjs/common';
+import { DomainExceptionFilter } from '@interface/http/exceptions/domain-exception-filter.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
 const composeArgs = ['-f', 'docker-compose.test.yml'] as const;
@@ -56,6 +57,7 @@ describeIfDocker('Superfície HTTP — contra Postgres real', () => {
     const { ApiModule } = await import('@infrastructure/bootstrap/roles/api.module.ts');
     app = await NestFactory.create(ApiModule, { logger: false });
     app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true, forbidNonWhitelisted: true }));
+    app.useGlobalFilters(new DomainExceptionFilter());
     await app.listen(0);
     const address = app.getHttpServer().address();
     baseUrl = `http://127.0.0.1:${address.port}`;
@@ -109,6 +111,41 @@ describeIfDocker('Superfície HTTP — contra Postgres real', () => {
     const body = (await response.json()) as { id: string; balance: { amount: string } };
     expect(body.id).toBe(walletId);
     expect(body.balance.amount).toBe('500.00');
+  });
+
+  it('GET /wallets/:walletId retorna 404 com ERR-006 para carteira inexistente', async () => {
+    const response = await fetch(`${api()}/wallets/${crypto.randomUUID()}`);
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe('ERR-006');
+  });
+
+  it('POST /wallets rejeita playerId duplicado na mesma moeda com 409', async () => {
+    const playerId = crypto.randomUUID();
+    const payload = JSON.stringify({ playerId, initialBalance: { amount: '10.00', currency: 'BRL' } });
+
+    await fetch(`${api()}/wallets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: payload,
+    });
+
+    const response = await fetch(`${api()}/wallets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: payload,
+    });
+
+    expect(response.status).toBe(409);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe('ERR-004');
+  });
+
+  it('GET /wagering/transactions/:transactionId retorna 404 com ERR-024 para transação inexistente', async () => {
+    const response = await fetch(`${api()}/wagering/transactions/${crypto.randomUUID()}`);
+    expect(response.status).toBe(404);
+    const body = (await response.json()) as { error: string };
+    expect(body.error).toBe('ERR-024');
   });
 
   it('POST /wagering/transactions processa uma aposta e retorna 201', async () => {
