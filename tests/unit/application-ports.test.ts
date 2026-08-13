@@ -47,6 +47,9 @@ describe('portas de repositório e serviço — implementabilidade', () => {
   it('WalletRepository e implementavel em memoria', async () => {
     const store = new Map<string, Wallet>();
     const repo: WalletRepository = {
+      async findById(_ctx: TransactionContext, id: string) {
+        return store.get(id);
+      },
       async findByIdForUpdate(_ctx: TransactionContext, id: string) {
         return store.get(id);
       },
@@ -140,6 +143,9 @@ describe('portas de repositório e serviço — implementabilidade', () => {
             (acc, e) => (e.direction === LedgerDirection.CREDIT ? acc.add(e.money) : acc.subtract(e.money)),
             Money.zero('BRL'),
           );
+      },
+      async countByWalletId(_ctx, walletId) {
+        return store.filter((e) => e.walletId === walletId).length;
       },
     };
 

@@ -45,4 +45,9 @@ export class TypeOrmLedgerRepository implements LedgerRepository {
     });
     return isNegative ? magnitude.negate() : magnitude;
   }
+
+  async countByWalletId(ctx: TransactionContext, walletId: string): Promise<number> {
+    const manager = ctx as EntityManager;
+    return manager.count(WalletLedgerEntryEntity, { where: { walletId } });
+  }
 }

@@ -58,6 +58,10 @@ class InMemoryWalletRepository implements WalletRepository {
     this.store.set(wallet.id, wallet);
   }
 
+  async findById(_ctx: TransactionContext, id: string): Promise<Wallet | undefined> {
+    return this.store.get(id);
+  }
+
   async findByIdForUpdate(_ctx: TransactionContext, id: string): Promise<Wallet | undefined> {
     return this.store.get(id);
   }
@@ -142,6 +146,10 @@ class InMemoryLedgerRepository implements LedgerRepository {
     transactionId: string,
   ): Promise<WalletLedgerEntry | undefined> {
     return this.store.find((e) => e.transactionId === transactionId);
+  }
+
+  async countByWalletId(): Promise<number> {
+    return this.store.length;
   }
 
   async sumByWalletId(): Promise<never> {

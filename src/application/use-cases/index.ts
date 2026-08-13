@@ -5,3 +5,5 @@ export type {
   ProcessWagerTransactionInput,
   ProcessWagerTransactionResult,
 } from './process-wager-transaction-use-case.ts';
+export { ReconcileWalletUseCase } from './reconcile-wallet-use-case.ts';
+export type { ReconcileWalletInput, ReconcileWalletResult } from './reconcile-wallet-use-case.ts';

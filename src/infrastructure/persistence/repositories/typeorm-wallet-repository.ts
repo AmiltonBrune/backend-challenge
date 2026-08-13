@@ -11,6 +11,12 @@ import { constraintNameOf } from './unique-violation.ts';
 export class TypeOrmWalletRepository implements WalletRepository {
   constructor(private readonly clock: Clock) {}
 
+  async findById(ctx: TransactionContext, id: string): Promise<Wallet | undefined> {
+    const manager = ctx as EntityManager;
+    const entity = await manager.findOne(WalletEntity, { where: { id } });
+    return entity === null ? undefined : WalletMapper.toDomain(entity);
+  }
+
   async findByIdForUpdate(ctx: TransactionContext, id: string): Promise<Wallet | undefined> {
     const manager = ctx as EntityManager;
     const entity = await manager.findOne(WalletEntity, {
