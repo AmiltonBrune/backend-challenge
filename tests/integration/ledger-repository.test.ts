@@ -191,14 +191,18 @@ describeIfDocker('TypeOrmLedgerRepository — contra Postgres real', () => {
       );
     });
 
-    const net = await uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id));
+    const net = await uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id, 'BRL'));
     expect(net.toJSON().amount).toBe('80.00');
     expect(net.toJSON().currency).toBe('BRL');
   });
 
-  it('lança ao tentar reconciliar uma wallet sem nenhum lançamento', async () => {
+  it('retorna Money.zero(currency) para uma wallet aberta sem nenhum lançamento', async () => {
     const wallet = await insertWallet();
-    await expect(uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id))).rejects.toThrow();
+    const net = await uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id, 'BRL'));
+
+    expect(net.isZero()).toBe(true);
+    expect(net.toJSON().amount).toBe('0.00');
+    expect(net.toJSON().currency).toBe('BRL');
   });
 
   it('retorna um total negativo quando débitos superam créditos, em vez de lançar', async () => {
@@ -212,7 +216,7 @@ describeIfDocker('TypeOrmLedgerRepository — contra Postgres real', () => {
       [wallet.id, txId],
     );
 
-    const net = await uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id));
+    const net = await uow().run((ctx) => repo().sumByWalletId(ctx, wallet.id, 'BRL'));
     expect(net.isNegative()).toBe(true);
     expect(net.toJSON().amount).toBe('-30.00');
   });

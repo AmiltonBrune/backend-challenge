@@ -8,8 +8,14 @@ export interface WagerTransactionProcessedData {
   readonly providerId: string;
   readonly externalTransactionId: string;
   readonly walletId: string;
+  readonly playerId: string;
+  readonly roundId: string;
+  readonly gameId: string;
   readonly kind: WagerTransactionKind;
   readonly money: MoneyProps;
+  readonly referenceTransactionId?: string;
+  readonly processedAt: Date;
+  readonly balanceAfter?: MoneyProps;
 }
 
 export class WagerTransactionProcessed extends IntegrationEvent<WagerTransactionProcessedData> {

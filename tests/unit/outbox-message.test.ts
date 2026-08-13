@@ -15,8 +15,12 @@ function buildEvent(): WagerTransactionProcessed {
       providerId: 'provider-a',
       externalTransactionId: 'ext-1',
       walletId: 'wallet-1',
+      playerId: 'player-1',
+      roundId: 'round-1',
+      gameId: 'game-1',
       kind: WagerTransactionKind.BET,
       money: Money.from({ amount: '25.00', currency: 'BRL' }).toJSON(),
+      processedAt: new Date('2026-08-12T00:00:00.000Z'),
     },
   });
 }
