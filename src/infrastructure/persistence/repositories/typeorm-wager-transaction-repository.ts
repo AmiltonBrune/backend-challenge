@@ -1,4 +1,4 @@
-import { QueryFailedError, type EntityManager } from 'typeorm';
+import type { EntityManager } from 'typeorm';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { WagerTransactionRepository } from '@application/ports/wager-transaction-repository.ts';
 import { ExternalTransactionConflictError } from '@application/errors/external-transaction-conflict-error.ts';
@@ -7,19 +7,7 @@ import { ReferenceAlreadyReversedError } from '@domain/errors/reference-already-
 import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
 import { WagerTransactionEntity } from '../entities/wager-transaction.entity.ts';
 import { WagerTransactionMapper } from '../mappers/wager-transaction.mapper.ts';
-
-const UNIQUE_VIOLATION = '23505';
-
-function constraintNameOf(error: unknown): string | undefined {
-  if (!(error instanceof QueryFailedError)) {
-    return undefined;
-  }
-  const driverError = error.driverError as { code?: string; constraint?: string } | undefined;
-  if (driverError?.code !== UNIQUE_VIOLATION) {
-    return undefined;
-  }
-  return driverError.constraint;
-}
+import { constraintNameOf } from './unique-violation.ts';
 
 function translateUniqueViolation(error: unknown, transaction: WagerTransaction): never {
   const constraint = constraintNameOf(error);

@@ -2,9 +2,11 @@ import type { EntityManager } from 'typeorm';
 import type { Clock } from '@application/ports/clock.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { WalletRepository } from '@application/ports/wallet-repository.ts';
+import { WalletAlreadyExistsError } from '@application/errors/wallet-already-exists-error.ts';
 import type { Wallet } from '@domain/wallet/wallet.ts';
 import { WalletEntity } from '../entities/wallet.entity.ts';
 import { WalletMapper } from '../mappers/wallet.mapper.ts';
+import { constraintNameOf } from './unique-violation.ts';
 
 export class TypeOrmWalletRepository implements WalletRepository {
   constructor(private readonly clock: Clock) {}
@@ -32,7 +34,14 @@ export class TypeOrmWalletRepository implements WalletRepository {
     const manager = ctx as EntityManager;
     const now = this.clock.now();
     const entity = WalletMapper.toEntity(wallet, { createdAt: now, updatedAt: now });
-    await manager.insert(WalletEntity, entity);
+    try {
+      await manager.insert(WalletEntity, entity);
+    } catch (error) {
+      if (constraintNameOf(error) === 'uq_wallet_player_currency') {
+        throw new WalletAlreadyExistsError(wallet.playerId, wallet.currency);
+      }
+      throw error;
+    }
   }
 
   async update(ctx: TransactionContext, wallet: Wallet): Promise<void> {
