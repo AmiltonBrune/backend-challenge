@@ -127,10 +127,10 @@ describeIfDocker('TypeOrmWagerTransactionRepository — contra Postgres real', (
     await runDockerCompose(['up', '-d', '--wait', 'postgres-test']);
     ({ AppDataSource } = await import('@infrastructure/persistence/data-source.ts'));
     const { TypeOrmUnitOfWork } = await import(
-      '@infrastructure/persistence/typeorm-unit-of-work.ts'
+      '@infrastructure/persistence/repositories/typeorm-unit-of-work.ts'
     );
     const { TypeOrmWagerTransactionRepository } = await import(
-      '@infrastructure/persistence/typeorm-wager-transaction-repository.ts'
+      '@infrastructure/persistence/repositories/typeorm-wager-transaction-repository.ts'
     );
     await AppDataSource.initialize();
     await AppDataSource.runMigrations();

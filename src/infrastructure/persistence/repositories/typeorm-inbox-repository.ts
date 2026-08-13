@@ -3,8 +3,8 @@ import type { Clock } from '@application/ports/clock.ts';
 import type { InboxInsertResult, InboxRepository } from '@application/ports/inbox-repository.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { InboxMessage } from '@domain/messaging/inbox-message.ts';
-import { InboxMessageEntity } from './entities/inbox-message.entity.ts';
-import { InboxMessageMapper } from './mappers/inbox-message.mapper.ts';
+import { InboxMessageEntity } from '../entities/inbox-message.entity.ts';
+import { InboxMessageMapper } from '../mappers/inbox-message.mapper.ts';
 
 export class TypeOrmInboxRepository implements InboxRepository {
   constructor(private readonly clock: Clock) {}

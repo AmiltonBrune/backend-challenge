@@ -75,10 +75,10 @@ describeIfDocker('TypeOrmWalletRepository — contra Postgres real', () => {
     await runDockerCompose(['up', '-d', '--wait', 'postgres-test']);
     ({ AppDataSource } = await import('@infrastructure/persistence/data-source.ts'));
     const { TypeOrmUnitOfWork } = await import(
-      '@infrastructure/persistence/typeorm-unit-of-work.ts'
+      '@infrastructure/persistence/repositories/typeorm-unit-of-work.ts'
     );
     const { TypeOrmWalletRepository } = await import(
-      '@infrastructure/persistence/typeorm-wallet-repository.ts'
+      '@infrastructure/persistence/repositories/typeorm-wallet-repository.ts'
     );
     await AppDataSource.initialize();
     await AppDataSource.runMigrations();

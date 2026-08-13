@@ -3,8 +3,8 @@ import type { Clock } from '@application/ports/clock.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { WalletRepository } from '@application/ports/wallet-repository.ts';
 import type { Wallet } from '@domain/wallet/wallet.ts';
-import { WalletEntity } from './entities/wallet.entity.ts';
-import { WalletMapper } from './mappers/wallet.mapper.ts';
+import { WalletEntity } from '../entities/wallet.entity.ts';
+import { WalletMapper } from '../mappers/wallet.mapper.ts';
 
 export class TypeOrmWalletRepository implements WalletRepository {
   constructor(private readonly clock: Clock) {}
