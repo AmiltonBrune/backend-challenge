@@ -4,3 +4,6 @@ export { ExternalTransactionConflictError } from './external-transaction-conflic
 export { WalletAlreadyExistsError } from './wallet-already-exists-error.ts';
 export { IdempotencyPayloadConflictError } from './idempotency-payload-conflict-error.ts';
 export { ConcurrentIdempotencyProcessingError } from './concurrent-idempotency-processing-error.ts';
+export { InvalidCursorError } from './invalid-cursor-error.ts';
+export { WagerTransactionNotFoundError } from './wager-transaction-not-found-error.ts';
+export { InvalidPaginationLimitError } from './invalid-pagination-limit-error.ts';

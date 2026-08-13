@@ -54,6 +54,10 @@ class InMemoryWalletRepository implements WalletRepository {
     return this.store.get(id);
   }
 
+  async findViewById() {
+    return undefined;
+  }
+
   async findByPlayerAndCurrency(
     _ctx: TransactionContext,
     playerId: string,
@@ -106,6 +110,14 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
   async findProcessedReversalByReference(): Promise<WagerTransaction | undefined> {
     return undefined;
   }
+
+  async findViewById() {
+    return undefined;
+  }
+
+  async findViewByProviderAndExternalTransactionId() {
+    return undefined;
+  }
 }
 
 class InMemoryLedgerRepository implements LedgerRepository {
@@ -128,6 +140,10 @@ class InMemoryLedgerRepository implements LedgerRepository {
 
   async sumByWalletId(): Promise<never> {
     throw new Error('não usado neste teste');
+  }
+
+  async findPageByWalletId() {
+    return { entries: [], hasMore: false, nextCursor: undefined };
   }
 }
 

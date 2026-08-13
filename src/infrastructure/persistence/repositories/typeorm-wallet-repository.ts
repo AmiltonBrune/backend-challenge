@@ -2,6 +2,7 @@ import type { EntityManager } from 'typeorm';
 import type { Clock } from '@application/ports/clock.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { WalletRepository } from '@application/ports/wallet-repository.ts';
+import type { WalletView } from '@application/dto/wallet-view.ts';
 import { WalletAlreadyExistsError } from '@application/errors/wallet-already-exists-error.ts';
 import type { Wallet } from '@domain/wallet/wallet.ts';
 import { WalletEntity } from '../entities/wallet.entity.ts';
@@ -15,6 +16,21 @@ export class TypeOrmWalletRepository implements WalletRepository {
     const manager = ctx as EntityManager;
     const entity = await manager.findOne(WalletEntity, { where: { id } });
     return entity === null ? undefined : WalletMapper.toDomain(entity);
+  }
+
+  async findViewById(ctx: TransactionContext, id: string): Promise<WalletView | undefined> {
+    const manager = ctx as EntityManager;
+    const entity = await manager.findOne(WalletEntity, { where: { id } });
+    if (entity === null) {
+      return undefined;
+    }
+    return {
+      id: entity.id,
+      playerId: entity.playerId,
+      balance: { amount: entity.balanceAmount, currency: entity.currency },
+      version: entity.version,
+      updatedAt: entity.updatedAt,
+    };
   }
 
   async findByIdForUpdate(ctx: TransactionContext, id: string): Promise<Wallet | undefined> {
