@@ -8,8 +8,12 @@ import type { TransactionContext } from '@application/ports/transaction-context.
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
 import type { WagerTransactionRepository } from '@application/ports/wager-transaction-repository.ts';
 import type { WalletRepository } from '@application/ports/wallet-repository.ts';
+import { ConcurrentIdempotencyProcessingError } from '@application/errors/concurrent-idempotency-processing-error.ts';
+import { IdempotencyKeyConflictError } from '@application/errors/idempotency-key-conflict-error.ts';
+import { IdempotencyPayloadConflictError } from '@application/errors/idempotency-payload-conflict-error.ts';
 import { FailureCode } from '@domain/errors/failure-code.ts';
 import { InternalKindNotAllowedError } from '@domain/errors/internal-kind-not-allowed-error.ts';
+import { computePayloadHash } from '@domain/idempotency/payload-hash.ts';
 import { LedgerDirection } from '@domain/ledger/ledger-direction.ts';
 import type { WalletLedgerEntry } from '@domain/ledger/wallet-ledger-entry.ts';
 import { Money } from '@domain/money/money.ts';
@@ -75,6 +79,12 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
   readonly store = new Map<string, WagerTransaction>();
 
   async insert(_ctx: TransactionContext, transaction: WagerTransaction): Promise<void> {
+    const collision = [...this.store.values()].find(
+      (t) => t.providerId === transaction.providerId && t.idempotencyKey === transaction.idempotencyKey,
+    );
+    if (collision !== undefined) {
+      throw new IdempotencyKeyConflictError(transaction.providerId, transaction.idempotencyKey);
+    }
     this.store.set(transaction.id, transaction);
   }
 
@@ -86,8 +96,14 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
     return this.store.get(id);
   }
 
-  async findByProviderAndIdempotencyKey(): Promise<WagerTransaction | undefined> {
-    return undefined;
+  async findByProviderAndIdempotencyKey(
+    _ctx: TransactionContext,
+    providerId: string,
+    idempotencyKey: string,
+  ): Promise<WagerTransaction | undefined> {
+    return [...this.store.values()].find(
+      (t) => t.providerId === providerId && t.idempotencyKey === idempotencyKey,
+    );
   }
 
   async findByProviderAndExternalTransactionId(
@@ -121,8 +137,11 @@ class InMemoryLedgerRepository implements LedgerRepository {
     this.store.push(entry);
   }
 
-  async findByTransactionId(): Promise<WalletLedgerEntry | undefined> {
-    return undefined;
+  async findByTransactionId(
+    _ctx: TransactionContext,
+    transactionId: string,
+  ): Promise<WalletLedgerEntry | undefined> {
+    return this.store.find((e) => e.transactionId === transactionId);
   }
 
   async sumByWalletId(): Promise<never> {
@@ -681,5 +700,104 @@ describe('ProcessWagerTransactionUseCase — ROLLBACK', () => {
 
     expect(result.status).toBe(WagerTransactionStatus.REJECTED);
     expect(result.failureCode).toBe(FailureCode.REFERENCE_KIND_NOT_REVERSIBLE);
+  });
+});
+
+describe('ProcessWagerTransactionUseCase — replay e conflito de idempotência', () => {
+  it('reenvio com o mesmo payload é replay idempotente e devolve o saldo histórico, não o atual', async () => {
+    const { useCase, walletRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+
+    const original = baseInput({ idempotencyKey: 'idem-fixo', externalTransactionId: 'ext-fixo' });
+    const first = await useCase.execute(original);
+    expect(first.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(first.balance?.amount).toBe('75.00');
+    expect(first.idempotentReplay).toBe(false);
+
+    await useCase.execute(
+      baseInput({ idempotencyKey: 'idem-outra', externalTransactionId: 'ext-outra', money: { amount: '10.00', currency: 'BRL' } }),
+    );
+
+    const replay = await useCase.execute(original);
+
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(replay.transactionId).toBe(first.transactionId);
+    expect(replay.balance?.amount).toBe('75.00');
+  });
+
+  it('reenvio com a mesma chave mas payload diferente lança IdempotencyPayloadConflictError', async () => {
+    const { useCase, walletRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+
+    await useCase.execute(baseInput({ idempotencyKey: 'idem-fixo', externalTransactionId: 'ext-fixo' }));
+
+    await expect(
+      useCase.execute(
+        baseInput({
+          idempotencyKey: 'idem-fixo',
+          externalTransactionId: 'ext-fixo',
+          money: { amount: '99.00', currency: 'BRL' },
+        }),
+      ),
+    ).rejects.toThrow(IdempotencyPayloadConflictError);
+  });
+
+  it('lança ConcurrentIdempotencyProcessingError quando a transação existente ainda está PENDING', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+
+    const input = baseInput({ idempotencyKey: 'idem-concorrente', externalTransactionId: 'ext-concorrente' });
+    const money = Money.from(input.money);
+    const payloadHash = await computePayloadHash({
+      providerId: input.declaredProviderId,
+      externalTransactionId: input.externalTransactionId,
+      playerId: input.playerId,
+      walletId: input.walletId,
+      roundId: input.roundId,
+      gameId: input.gameId,
+      kind: input.kind,
+      money: money.toJSON(),
+    });
+    const pending = WagerTransaction.create({
+      id: 'tx-em-andamento',
+      providerId: input.declaredProviderId,
+      externalTransactionId: input.externalTransactionId,
+      idempotencyKey: input.idempotencyKey,
+      payloadHash,
+      walletId: input.walletId,
+      playerId: input.playerId,
+      roundId: input.roundId,
+      kind: input.kind,
+      money,
+      createdAt: new Date('2026-08-13T00:00:00.000Z'),
+    });
+    wagerTransactionRepository.store.set(pending.id, pending);
+
+    await expect(useCase.execute(input)).rejects.toThrow(ConcurrentIdempotencyProcessingError);
   });
 });

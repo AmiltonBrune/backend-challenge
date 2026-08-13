@@ -3,9 +3,12 @@ import type { DataSource } from 'typeorm';
 import type { Clock } from '@application/ports/clock.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
 import type { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
+import { ConcurrentIdempotencyProcessingError } from '@application/errors/concurrent-idempotency-processing-error.ts';
+import { IdempotencyPayloadConflictError } from '@application/errors/idempotency-payload-conflict-error.ts';
 import { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { FailureCode } from '@domain/errors/failure-code.ts';
+import { computePayloadHash } from '@domain/idempotency/payload-hash.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
 const composeArgs = ['-f', 'docker-compose.test.yml'] as const;
@@ -255,7 +258,7 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
     expect(outboxRows).toHaveLength(0);
   });
 
-  it('idempotencyKey duplicada propaga conflito e reverte tudo (nenhuma segunda transação persiste)', async () => {
+  it('idempotencyKey duplicada com externalTransactionId diferente é conflito de payload, sem segunda transação', async () => {
     const wallet = await insertWallet('100.00');
     const idempotencyKey = crypto.randomUUID();
 
@@ -283,7 +286,7 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
         kind: WagerTransactionKind.BET,
         money: { amount: '10.00', currency: 'BRL' },
       }),
-    ).rejects.toThrow();
+    ).rejects.toThrow(IdempotencyPayloadConflictError);
 
     const walletRows = await dataSource().query(
       `SELECT balance_amount FROM wallets WHERE id = $1`,
@@ -296,6 +299,93 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
       [wallet.id],
     );
     expect(txRows).toHaveLength(1);
+  });
+
+  it('reenvio com o payload idêntico é replay idempotente e devolve o saldo histórico da operação original', async () => {
+    const wallet = await insertWallet('100.00');
+    const idempotencyKey = crypto.randomUUID();
+    const externalTransactionId = crypto.randomUUID();
+    const original = {
+      declaredProviderId: 'provider-a',
+      idempotencyKey,
+      externalTransactionId,
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.BET,
+      money: { amount: '25.00', currency: 'BRL' },
+    };
+
+    const first = await processWager().execute(original);
+    expect(first.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(first.balance?.amount).toBe('75.00');
+    expect(first.idempotentReplay).toBe(false);
+
+    await processWager().execute({
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.WIN,
+      money: { amount: '50.00', currency: 'BRL' },
+    });
+
+    const replay = await processWager().execute(original);
+
+    expect(replay.idempotentReplay).toBe(true);
+    expect(replay.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(replay.transactionId).toBe(first.transactionId);
+    expect(replay.balance?.amount).toBe('75.00');
+
+    const txRows = await dataSource().query(
+      `SELECT 1 FROM wager_transactions WHERE wallet_id = $1 AND kind = 'BET'`,
+      [wallet.id],
+    );
+    expect(txRows).toHaveLength(1);
+  });
+
+  it('lança ConcurrentIdempotencyProcessingError quando a transação existente ainda está PENDING', async () => {
+    const wallet = await insertWallet('100.00');
+    const idempotencyKey = crypto.randomUUID();
+    const externalTransactionId = crypto.randomUUID();
+    const money = { amount: '25.00', currency: 'BRL' };
+
+    const payloadHash = await computePayloadHash({
+      providerId: 'provider-a',
+      externalTransactionId,
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.BET,
+      money,
+    });
+
+    await dataSource().query(
+      `INSERT INTO wager_transactions
+         (id, provider_id, external_transaction_id, idempotency_key, payload_hash,
+          wallet_id, player_id, round_id, game_id, kind, money_amount, money_currency, status, created_at)
+       VALUES (gen_random_uuid(), 'provider-a', $1, $2, $3, $4, $5, 'round-1', 'game-1', 'BET', '25.00', 'BRL', 'PENDING', now())`,
+      [externalTransactionId, idempotencyKey, payloadHash, wallet.id, wallet.playerId],
+    );
+
+    await expect(
+      processWager().execute({
+        declaredProviderId: 'provider-a',
+        idempotencyKey,
+        externalTransactionId,
+        playerId: wallet.playerId,
+        walletId: wallet.id,
+        roundId: 'round-1',
+        gameId: 'game-1',
+        kind: WagerTransactionKind.BET,
+        money,
+      }),
+    ).rejects.toThrow(ConcurrentIdempotencyProcessingError);
   });
 
   it('REFUND credita de volta um BET processado e resolve reference_transaction_id', async () => {
