@@ -5,7 +5,7 @@ import { layerDependencyPolicy, layerElements } from './eslint/layer-policies.mj
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'tests/fixtures/**'],
+    ignores: ['dist/**', 'node_modules/**', 'tests/fixtures/**', '.claude/**'],
   },
   {
     files: ['src/**/*.ts', 'tests/**/*.ts'],
