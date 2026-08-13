@@ -3,6 +3,7 @@ import type { DataSource } from 'typeorm';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
 import { WalletBalanceChanged } from '@domain/events/wallet-balance-changed.ts';
+import { LedgerDirection } from '@domain/ledger/ledger-direction.ts';
 import { OutboxMessage } from '@domain/messaging/outbox-message.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
@@ -70,8 +71,9 @@ function buildMessage(occurredAt: Date): OutboxMessage {
     occurredAt,
     data: {
       walletId: crypto.randomUUID(),
-      playerId: crypto.randomUUID(),
-      currency: 'BRL',
+      transactionId: crypto.randomUUID(),
+      direction: LedgerDirection.CREDIT,
+      money: { amount: '50.00', currency: 'BRL' },
       balanceBefore: { amount: '100.00', currency: 'BRL' },
       balanceAfter: { amount: '150.00', currency: 'BRL' },
       walletVersion: 2,

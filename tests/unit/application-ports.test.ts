@@ -31,8 +31,11 @@ function buildOutboxMessage(): OutboxMessage {
       providerId: 'provider-a',
       externalTransactionId: 'ext-1',
       walletId: 'w1',
+      playerId: 'player-1',
+      roundId: 'round-1',
       kind: WagerTransactionKind.BET,
       money: Money.from({ amount: '25.00', currency: 'BRL' }).toJSON(),
+      processedAt: new Date('2026-08-12T00:00:00.000Z'),
     },
   });
   return OutboxMessage.enqueue(event);
@@ -143,7 +146,7 @@ describe('portas de repositório e serviço — implementabilidade', () => {
     await repo.insert(undefined, entry);
 
     expect(await repo.findByTransactionId(undefined, 'tx1')).toBe(entry);
-    expect((await repo.sumByWalletId(undefined, 'w1')).toJSON().amount).toBe('25.00');
+    expect((await repo.sumByWalletId(undefined, 'w1', 'BRL')).toJSON().amount).toBe('25.00');
   });
 
   it('InboxRepository e implementavel em memoria', async () => {
