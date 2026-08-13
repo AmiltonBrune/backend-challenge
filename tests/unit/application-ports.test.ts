@@ -58,6 +58,19 @@ describe('portas de repositório e serviço — implementabilidade', () => {
           (w) => w.playerId === playerId && w.currency === currency,
         );
       },
+      async findViewById(_ctx, id) {
+        const wallet = store.get(id);
+        if (wallet === undefined) {
+          return undefined;
+        }
+        return {
+          id: wallet.id,
+          playerId: wallet.playerId,
+          balance: wallet.balance().toJSON(),
+          version: wallet.version(),
+          updatedAt: new Date(),
+        };
+      },
       async insert(_ctx, wallet) {
         store.set(wallet.id, wallet);
       },
@@ -103,6 +116,12 @@ describe('portas de repositório e serviço — implementabilidade', () => {
             t.status() === WagerTransactionStatus.PROCESSED,
         );
       },
+      async findViewById() {
+        return undefined;
+      },
+      async findViewByProviderAndExternalTransactionId() {
+        return undefined;
+      },
     };
 
     const tx = WagerTransaction.create({
@@ -146,6 +165,9 @@ describe('portas de repositório e serviço — implementabilidade', () => {
       },
       async countByWalletId(_ctx, walletId) {
         return store.filter((e) => e.walletId === walletId).length;
+      },
+      async findPageByWalletId() {
+        return { entries: [], hasMore: false, nextCursor: undefined };
       },
     };
 

@@ -1,3 +1,4 @@
+import type { WagerTransactionView } from '@application/dto/wager-transaction-view.ts';
 import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
 import type { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import type { TransactionContext } from './transaction-context.ts';
@@ -21,4 +22,10 @@ export interface WagerTransactionRepository {
     referenceTransactionId: string,
     kind: WagerTransactionKind,
   ): Promise<WagerTransaction | undefined>;
+  findViewById(ctx: TransactionContext, id: string): Promise<WagerTransactionView | undefined>;
+  findViewByProviderAndExternalTransactionId(
+    ctx: TransactionContext,
+    providerId: string,
+    externalTransactionId: string,
+  ): Promise<WagerTransactionView | undefined>;
 }

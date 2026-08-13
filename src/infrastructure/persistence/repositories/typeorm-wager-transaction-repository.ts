@@ -1,15 +1,36 @@
 import type { EntityManager } from 'typeorm';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { WagerTransactionRepository } from '@application/ports/wager-transaction-repository.ts';
+import type { WagerTransactionView } from '@application/dto/wager-transaction-view.ts';
 import { ExternalTransactionConflictError } from '@application/errors/external-transaction-conflict-error.ts';
 import { IdempotencyKeyConflictError } from '@application/errors/idempotency-key-conflict-error.ts';
 import { ReferenceAlreadyReversedError } from '@domain/errors/reference-already-reversed-error.ts';
+import type { FailureCode } from '@domain/errors/failure-code.ts';
 import type { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
-import type { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
+import { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { WagerTransactionEntity } from '../entities/wager-transaction.entity.ts';
 import { WagerTransactionMapper } from '../mappers/wager-transaction.mapper.ts';
 import { constraintNameOf } from './unique-violation.ts';
+
+function toView(entity: WagerTransactionEntity): WagerTransactionView {
+  return {
+    transactionId: entity.id,
+    providerId: entity.providerId,
+    externalTransactionId: entity.externalTransactionId,
+    walletId: entity.walletId,
+    playerId: entity.playerId,
+    roundId: entity.roundId,
+    gameId: entity.gameId,
+    kind: entity.kind as WagerTransactionKind,
+    money: { amount: entity.moneyAmount, currency: entity.moneyCurrency },
+    status: entity.status as WagerTransactionStatus,
+    failureCode: entity.failureCode as FailureCode | null,
+    referenceTransactionId: entity.referenceTransactionId,
+    createdAt: entity.createdAt,
+    processedAt: entity.processedAt,
+  };
+}
 
 function translateUniqueViolation(error: unknown, transaction: WagerTransaction): never {
   const constraint = constraintNameOf(error);
@@ -105,5 +126,26 @@ export class TypeOrmWagerTransactionRepository implements WagerTransactionReposi
       where: { referenceTransactionId, kind, status: WagerTransactionStatus.PROCESSED },
     });
     return entity === null ? undefined : WagerTransactionMapper.toDomain(entity);
+  }
+
+  async findViewById(
+    ctx: TransactionContext,
+    id: string,
+  ): Promise<WagerTransactionView | undefined> {
+    const manager = ctx as EntityManager;
+    const entity = await manager.findOne(WagerTransactionEntity, { where: { id } });
+    return entity === null ? undefined : toView(entity);
+  }
+
+  async findViewByProviderAndExternalTransactionId(
+    ctx: TransactionContext,
+    providerId: string,
+    externalTransactionId: string,
+  ): Promise<WagerTransactionView | undefined> {
+    const manager = ctx as EntityManager;
+    const entity = await manager.findOne(WagerTransactionEntity, {
+      where: { providerId, externalTransactionId },
+    });
+    return entity === null ? undefined : toView(entity);
   }
 }

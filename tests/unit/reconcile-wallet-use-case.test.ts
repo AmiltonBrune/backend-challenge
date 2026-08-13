@@ -39,6 +39,10 @@ class InMemoryWalletRepository implements WalletRepository {
     return undefined;
   }
 
+  async findViewById() {
+    return undefined;
+  }
+
   async insert(_ctx: TransactionContext, wallet: Wallet): Promise<void> {
     this.store.set(wallet.id, wallet);
   }
@@ -66,6 +70,10 @@ class FixedLedgerRepository implements LedgerRepository {
 
   async countByWalletId(): Promise<number> {
     return this.count;
+  }
+
+  async findPageByWalletId() {
+    return { entries: [], hasMore: false, nextCursor: undefined };
   }
 }
 
