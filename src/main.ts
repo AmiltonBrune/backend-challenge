@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { resolveAppRole } from '@infrastructure/bootstrap/app-role.ts';
 import { selectRoleModule } from '@infrastructure/bootstrap/select-role-module.ts';
 import { loadConfig } from '@infrastructure/config/load-config.ts';
+import { DomainExceptionFilter } from '@interface/http/exceptions/domain-exception-filter.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
@@ -19,6 +20,7 @@ async function bootstrap(): Promise<void> {
         forbidNonWhitelisted: true,
       }),
     );
+    app.useGlobalFilters(new DomainExceptionFilter());
     await app.listen(config.port);
     return;
   }
