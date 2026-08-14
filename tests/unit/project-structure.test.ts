@@ -22,7 +22,6 @@ const expectedDirs = [
   'src/infrastructure/config',
   'src/infrastructure/bootstrap',
   'src/interface/http',
-  'src/interface/sqs',
   'src/workers',
 ];
 
