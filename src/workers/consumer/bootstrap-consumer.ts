@@ -5,6 +5,7 @@ import { TypeOrmWalletRepository } from '@infrastructure/persistence/repositorie
 import { TypeOrmWagerTransactionRepository } from '@infrastructure/persistence/repositories/typeorm-wager-transaction-repository.ts';
 import { TypeOrmLedgerRepository } from '@infrastructure/persistence/repositories/typeorm-ledger-repository.ts';
 import { TypeOrmOutboxRepository } from '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts';
+import { TypeOrmInboxRepository } from '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts';
 import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
@@ -28,6 +29,7 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
     new TypeOrmWagerTransactionRepository(),
     new TypeOrmLedgerRepository(),
     new TypeOrmOutboxRepository(),
+    new TypeOrmInboxRepository(clock),
     new DeclaredProviderIdentity(),
     clock,
     new UuidIdGenerator(),
@@ -35,8 +37,15 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
 
   const sqsClient = buildSqsClient(config);
 
-  return new SqsWagerTransactionConsumer(sqsClient, config.consumer.queueUrl, useCase, {
-    maxMessages: config.consumer.maxMessages,
-    visibilityTimeoutSeconds: config.consumer.visibilityTimeoutSeconds,
-  });
+  return new SqsWagerTransactionConsumer(
+    sqsClient,
+    config.consumer.queueUrl,
+    config.consumer.dlqUrl,
+    config.consumer.consumerName,
+    useCase,
+    {
+      maxMessages: config.consumer.maxMessages,
+      visibilityTimeoutSeconds: config.consumer.visibilityTimeoutSeconds,
+    },
+  );
 }

@@ -2,10 +2,11 @@ import { afterAll, beforeAll, expect, it } from 'bun:test';
 import { ReceiveMessageCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { DataSource } from 'typeorm';
 import { SqsWagerTransactionConsumer } from '@workers/consumer/sqs-wager-transaction-consumer.ts';
+import { describeIfDocker, runDockerCompose } from '@tests/support/docker-compose-harness.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
 const queueUrl = 'http://localhost:54566/000000000000/wager-transactions.fifo';
-import { describeIfDocker, runDockerCompose } from '@tests/support/docker-compose-harness.ts';
+const dlqUrl = 'http://localhost:54566/000000000000/wager-transactions-dlq.fifo';
 
 let AppDataSource: DataSource | undefined;
 
@@ -45,6 +46,9 @@ describeIfDocker('SqsWagerTransactionConsumer — contra Postgres e SQS reais', 
     const { TypeOrmOutboxRepository } = await import(
       '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts'
     );
+    const { TypeOrmInboxRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts'
+    );
     const { DeclaredProviderIdentity } = await import('@infrastructure/declared-provider-identity.ts');
     const { ProcessWagerTransactionUseCase } = await import(
       '@application/use-cases/process-wager-transaction-use-case.ts'
@@ -75,12 +79,15 @@ describeIfDocker('SqsWagerTransactionConsumer — contra Postgres e SQS reais', 
       initialBalance: { amount: '100.00', currency: 'BRL' },
     });
 
+    const inboxRepository = new TypeOrmInboxRepository(clock);
+
     const useCase = new ProcessWagerTransactionUseCase(
       unitOfWork,
       walletRepository,
       wagerTransactionRepository,
       ledgerRepository,
       outboxRepository,
+      inboxRepository,
       new DeclaredProviderIdentity(),
       clock,
       idGenerator,
@@ -112,9 +119,14 @@ describeIfDocker('SqsWagerTransactionConsumer — contra Postgres e SQS reais', 
       }),
     );
 
-    const consumer = new SqsWagerTransactionConsumer(sqsClient, queueUrl, useCase, {
-      waitTimeSeconds: 2,
-    });
+    const consumer = new SqsWagerTransactionConsumer(
+      sqsClient,
+      queueUrl,
+      dlqUrl,
+      'wagering-consumer',
+      useCase,
+      { waitTimeSeconds: 2 },
+    );
     await consumer.receiveAndProcessBatch();
 
     const updatedWallet = await unitOfWork.run((ctx) => walletRepository.findById(ctx, wallet.id));
@@ -124,5 +136,84 @@ describeIfDocker('SqsWagerTransactionConsumer — contra Postgres e SQS reais', 
       new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 1, WaitTimeSeconds: 1 }),
     );
     expect(secondPoll.Messages ?? []).toHaveLength(0);
+  }, 30_000);
+
+  it('encaminha mensagem malformada à DLQ real e apaga da fila original, sem reentrega', async () => {
+    const { TypeOrmUnitOfWork } = await import(
+      '@infrastructure/persistence/repositories/typeorm-unit-of-work.ts'
+    );
+    const { TypeOrmWalletRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-wallet-repository.ts'
+    );
+    const { TypeOrmWagerTransactionRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-wager-transaction-repository.ts'
+    );
+    const { TypeOrmLedgerRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-ledger-repository.ts'
+    );
+    const { TypeOrmOutboxRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts'
+    );
+    const { TypeOrmInboxRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts'
+    );
+    const { DeclaredProviderIdentity } = await import('@infrastructure/declared-provider-identity.ts');
+    const { ProcessWagerTransactionUseCase } = await import(
+      '@application/use-cases/process-wager-transaction-use-case.ts'
+    );
+
+    const dataSource = AppDataSource as DataSource;
+    const clock = { now: () => new Date() };
+    const idGenerator = { generate: () => crypto.randomUUID() };
+    const unitOfWork = new TypeOrmUnitOfWork(dataSource);
+
+    const useCase = new ProcessWagerTransactionUseCase(
+      unitOfWork,
+      new TypeOrmWalletRepository(clock),
+      new TypeOrmWagerTransactionRepository(),
+      new TypeOrmLedgerRepository(),
+      new TypeOrmOutboxRepository(),
+      new TypeOrmInboxRepository(clock),
+      new DeclaredProviderIdentity(),
+      clock,
+      idGenerator,
+    );
+
+    const sqsClient = new SQSClient({
+      endpoint: 'http://localhost:54566',
+      region: 'us-east-1',
+      credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+    });
+
+    const groupId = crypto.randomUUID();
+    await sqsClient.send(
+      new SendMessageCommand({
+        QueueUrl: queueUrl,
+        MessageGroupId: groupId,
+        MessageDeduplicationId: groupId,
+        MessageBody: JSON.stringify({ campoInexistente: true }),
+      }),
+    );
+
+    const consumer = new SqsWagerTransactionConsumer(
+      sqsClient,
+      queueUrl,
+      dlqUrl,
+      'wagering-consumer',
+      useCase,
+      { waitTimeSeconds: 2 },
+    );
+    await consumer.receiveAndProcessBatch();
+
+    const originalQueuePoll = await sqsClient.send(
+      new ReceiveMessageCommand({ QueueUrl: queueUrl, MaxNumberOfMessages: 1, WaitTimeSeconds: 1 }),
+    );
+    expect(originalQueuePoll.Messages ?? []).toHaveLength(0);
+
+    const dlqPoll = await sqsClient.send(
+      new ReceiveMessageCommand({ QueueUrl: dlqUrl, MaxNumberOfMessages: 1, WaitTimeSeconds: 2 }),
+    );
+    expect(dlqPoll.Messages ?? []).toHaveLength(1);
+    expect(dlqPoll.Messages?.[0]?.Body).toBe(JSON.stringify({ campoInexistente: true }));
   }, 30_000);
 });
