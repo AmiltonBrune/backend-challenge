@@ -1,4 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Headers, Inject, Param, Post, Res } from '@nestjs/common';
+import { ApiHeader, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
 import type { Response } from 'express';
@@ -38,6 +39,7 @@ function statusFor(status: WagerTransactionStatus, idempotentReplay: boolean): n
   return 422;
 }
 
+@ApiTags('wagering')
 @Controller()
 export class WageringController {
   constructor(
@@ -47,6 +49,14 @@ export class WageringController {
   ) {}
 
   @Post('wagering/transactions')
+  @ApiOperation({
+    summary: 'Processa uma transação de aposta (BET, WIN, LOSS, REFUND ou ROLLBACK), com correção financeira.',
+  })
+  @ApiHeader({ name: 'idempotency-key', required: true, description: 'Chave de idempotência da requisição.' })
+  @ApiResponse({ status: 201, description: 'Processada pela primeira vez.' })
+  @ApiResponse({ status: 200, description: 'Replay idempotente — mesmo resultado da primeira chamada.' })
+  @ApiResponse({ status: 202, description: 'Aceita, aguardando resolução de referência (REFUND/ROLLBACK).' })
+  @ApiResponse({ status: 422, description: 'Rejeitada (ex.: saldo insuficiente) — ver failureCode no corpo.' })
   async create(
     @Body() body: ProcessWagerTransactionRequestDto,
     @Headers('idempotency-key') rawIdempotencyKey: string | undefined,
@@ -121,6 +131,10 @@ export class WageringController {
   }
 
   @Get('wagering/transactions/:transactionId')
+  @ApiOperation({ summary: 'Consulta uma transação de aposta pelo id interno.' })
+  @ApiParam({ name: 'transactionId', example: 'd00a5ef4-d683-46bf-bff4-d7b8a3611a25' })
+  @ApiResponse({ status: 200, description: 'Transação encontrada.' })
+  @ApiResponse({ status: 404, description: 'Transação não encontrada.' })
   async findOne(@Param() params: TransactionIdParamDto) {
     return this.getWagerTransaction.execute({ transactionId: params.transactionId });
   }
