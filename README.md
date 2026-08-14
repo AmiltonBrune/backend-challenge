@@ -203,6 +203,32 @@ bun run scripts/load-test/verify.ts
 
 Metodologia completa, resultados e análise em [`LOAD-TEST.md`](./LOAD-TEST.md).
 
+## Observabilidade
+
+`docker compose up` já sobe Prometheus, Grafana e Tempo pré-configurados junto com a
+aplicação — nenhum passo manual adicional.
+
+- **Grafana** — `http://localhost:3030` (login anônimo, sem senha). O dashboard
+  "Wagering Overview" (pasta *Wagering*) já vem provisionado, com painéis de
+  transações por tipo/status, rejeições por `failureCode`, replays e conflitos de
+  idempotência, latência HTTP (p95) e publicação do outbox.
+- **Prometheus** — `http://localhost:9090`. Faz scrape do `/metrics` das três roles
+  (`api:3000`, `consumer:9464`, `worker:9464`) a cada 5s.
+- **Tempo** — recebe traces via OTLP (`http://tempo:4318` dentro da rede do compose,
+  `http://localhost:4318` do host). Cada requisição HTTP e cada query no Postgres
+  geram spans automaticamente (`@opentelemetry/instrumentation-http` e
+  `-instrumentation-pg`), correlacionados na mesma trace.
+
+As roles `consumer` e `worker` não têm servidor HTTP próprio, então cada uma sobe um
+servidor HTTP mínimo só para expor `/metrics` (`METRICS_PORT`, padrão `9464`).
+
+Logs estruturados em JSON (com `correlationId` por requisição) vão para stdout de
+cada container — `docker compose logs -f <serviço>` (ver seção de Setup acima).
+
+Para trocar o destino dos traces (por exemplo, ao rodar localmente sem o Tempo do
+compose), defina `OTEL_EXPORTER_OTLP_ENDPOINT` antes de subir a aplicação; o padrão é
+`http://localhost:4318`.
+
 ## Arquitetura
 
 Hexagonal/DDD com quatro camadas (`domain`, `application`, `infrastructure`,
