@@ -2,7 +2,7 @@ import { afterAll, beforeAll, expect, it } from 'bun:test';
 import { ReceiveMessageCommand, SendMessageCommand, SQSClient } from '@aws-sdk/client-sqs';
 import type { DataSource } from 'typeorm';
 import { SqsWagerTransactionConsumer } from '@workers/consumer/sqs-wager-transaction-consumer.ts';
-import { describeIfDocker, runDockerCompose } from '@tests/support/docker-compose-harness.ts';
+import { describeIfDocker, runDockerCompose, waitForQueue } from '@tests/support/docker-compose-harness.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
 const queueUrl = 'http://localhost:54566/000000000000/wager-transactions.fifo';
@@ -14,6 +14,14 @@ describeIfDocker('SqsWagerTransactionConsumer — contra Postgres e SQS reais', 
   beforeAll(async () => {
     process.env['DATABASE_URL'] = databaseUrl;
     await runDockerCompose(['up', '-d', '--wait', 'postgres-test', 'localstack-test']);
+
+    const readinessClient = new SQSClient({
+      endpoint: 'http://localhost:54566',
+      region: 'us-east-1',
+      credentials: { accessKeyId: 'test', secretAccessKey: 'test' },
+    });
+    await waitForQueue(readinessClient, 'wager-transactions.fifo');
+    await waitForQueue(readinessClient, 'wager-transactions-dlq.fifo');
 
     ({ AppDataSource } = await import('@infrastructure/persistence/data-source.ts'));
     await AppDataSource.initialize();
