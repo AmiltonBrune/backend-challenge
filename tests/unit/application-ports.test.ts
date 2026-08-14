@@ -122,6 +122,9 @@ describe('portas de repositório e serviço — implementabilidade', () => {
       async findViewByProviderAndExternalTransactionId() {
         return undefined;
       },
+      async findEligiblePendingReferenceForRetry() {
+        return [];
+      },
     };
 
     const tx = WagerTransaction.create({

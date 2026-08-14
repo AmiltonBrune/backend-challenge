@@ -10,6 +10,7 @@ import { LivenessState } from '@application/health/liveness-state.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
 import { bootstrapConsumer } from '@workers/consumer/bootstrap-consumer.ts';
+import { bootstrapPendingReferenceRetryWorker } from '@workers/pending-reference/bootstrap-pending-reference-worker.ts';
 import { bootstrapOutboxPublisher } from '@workers/outbox-publisher/bootstrap-outbox-publisher.ts';
 
 async function bootstrap(): Promise<void> {
@@ -59,9 +60,18 @@ async function bootstrap(): Promise<void> {
   }
 
   if (role === 'worker') {
+    if (config.worker === undefined) {
+      throw new Error('Configuração do worker ausente.');
+    }
+
     const outboxPublisher = await bootstrapOutboxPublisher(config);
     outboxPublisher.start();
+
+    const pendingReferenceWorker = await bootstrapPendingReferenceRetryWorker(config);
+    pendingReferenceWorker.start(config.worker.pendingReferencePollIntervalMs);
+
     process.on('SIGTERM', () => {
+      pendingReferenceWorker.stop();
       outboxPublisher.stop().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`falha ao encerrar o outbox publisher: ${message}`);

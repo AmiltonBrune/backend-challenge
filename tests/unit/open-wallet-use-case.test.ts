@@ -118,6 +118,10 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
   async findViewByProviderAndExternalTransactionId() {
     return undefined;
   }
+
+  async findEligiblePendingReferenceForRetry() {
+    return [];
+  }
 }
 
 class InMemoryLedgerRepository implements LedgerRepository {

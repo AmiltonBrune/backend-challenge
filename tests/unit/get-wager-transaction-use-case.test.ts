@@ -66,6 +66,10 @@ class FixedWagerTransactionRepository implements WagerTransactionRepository {
   async findProcessedReversalByReference(): Promise<WagerTransaction | undefined> {
     return undefined;
   }
+
+  async findEligiblePendingReferenceForRetry() {
+    return [];
+  }
 }
 
 function buildUseCase(): GetWagerTransactionUseCase {

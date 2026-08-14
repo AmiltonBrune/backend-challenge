@@ -23,4 +23,6 @@ export interface RehydrateWagerTransactionProps extends CreateWagerTransactionPr
   readonly status: WagerTransactionStatus;
   readonly failureCode?: FailureCode;
   readonly processedAt?: Date;
+  readonly pendingReferenceAttempts?: number;
+  readonly pendingReferenceNextAttemptAt?: Date;
 }
