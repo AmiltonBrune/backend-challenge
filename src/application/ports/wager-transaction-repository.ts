@@ -3,10 +3,20 @@ import type { WagerTransaction } from '@domain/wager-transaction/wager-transacti
 import type { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import type { TransactionContext } from './transaction-context.ts';
 
+export interface PendingReferenceCandidate {
+  readonly transaction: WagerTransaction;
+  readonly gameId: string | null;
+}
+
 export interface WagerTransactionRepository {
   insert(ctx: TransactionContext, transaction: WagerTransaction, gameId: string | null): Promise<void>;
   update(ctx: TransactionContext, transaction: WagerTransaction): Promise<void>;
   findById(ctx: TransactionContext, id: string): Promise<WagerTransaction | undefined>;
+  findEligiblePendingReferenceForRetry(
+    ctx: TransactionContext,
+    now: Date,
+    limit: number,
+  ): Promise<PendingReferenceCandidate[]>;
   findByProviderAndIdempotencyKey(
     ctx: TransactionContext,
     providerId: string,

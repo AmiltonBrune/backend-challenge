@@ -20,6 +20,7 @@ export class WagerTransactionMapper {
       money: Money.from({ amount: entity.moneyAmount, currency: entity.moneyCurrency }),
       status: entity.status as WagerTransactionStatus,
       createdAt: entity.createdAt,
+      pendingReferenceAttempts: entity.pendingReferenceAttempts,
       ...(entity.referenceExternalTransactionId !== null
         ? { referenceExternalTransactionId: entity.referenceExternalTransactionId }
         : {}),
@@ -30,6 +31,9 @@ export class WagerTransactionMapper {
         ? { failureCode: entity.failureCode as FailureCode }
         : {}),
       ...(entity.processedAt !== null ? { processedAt: entity.processedAt } : {}),
+      ...(entity.pendingReferenceNextAttemptAt !== null
+        ? { pendingReferenceNextAttemptAt: entity.pendingReferenceNextAttemptAt }
+        : {}),
     });
   }
 
@@ -55,6 +59,8 @@ export class WagerTransactionMapper {
       failureCode: transaction.failureCode() ?? null,
       processedAt: transaction.processedAt() ?? null,
       createdAt: transaction.createdAt,
+      pendingReferenceAttempts: transaction.pendingReferenceAttempts(),
+      pendingReferenceNextAttemptAt: transaction.pendingReferenceNextAttemptAt() ?? null,
     };
   }
 }

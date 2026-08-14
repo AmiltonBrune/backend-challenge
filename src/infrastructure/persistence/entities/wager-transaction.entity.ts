@@ -62,4 +62,10 @@ export class WagerTransactionEntity {
 
   @Column({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
+
+  @Column({ name: 'pending_reference_attempts', type: 'int' })
+  pendingReferenceAttempts!: number;
+
+  @Column({ name: 'pending_reference_next_attempt_at', type: 'timestamptz', nullable: true })
+  pendingReferenceNextAttemptAt!: Date | null;
 }

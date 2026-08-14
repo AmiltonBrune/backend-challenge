@@ -144,6 +144,17 @@ class InMemoryWagerTransactionRepository implements WagerTransactionRepository {
   async findViewByProviderAndExternalTransactionId() {
     return undefined;
   }
+
+  async findEligiblePendingReferenceForRetry(_ctx: TransactionContext, now: Date, limit: number) {
+    return [...this.store.values()]
+      .filter((t) => t.status() === WagerTransactionStatus.PENDING_REFERENCE)
+      .filter((t) => {
+        const nextAttemptAt = t.pendingReferenceNextAttemptAt();
+        return nextAttemptAt === undefined || nextAttemptAt.getTime() <= now.getTime();
+      })
+      .slice(0, limit)
+      .map((transaction) => ({ transaction, gameId: null }));
+  }
 }
 
 class InMemoryLedgerRepository implements LedgerRepository {

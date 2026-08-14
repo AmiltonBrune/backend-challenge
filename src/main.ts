@@ -10,6 +10,7 @@ import { LivenessState } from '@application/health/liveness-state.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
 import { bootstrapConsumer } from '@workers/consumer/bootstrap-consumer.ts';
+import { bootstrapPendingReferenceRetryWorker } from '@workers/pending-reference/bootstrap-pending-reference-worker.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
@@ -53,6 +54,18 @@ async function bootstrap(): Promise<void> {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`falha ao encerrar o consumer: ${message}`);
       });
+    });
+    return;
+  }
+
+  if (role === 'worker') {
+    if (config.worker === undefined) {
+      throw new Error('Configuração do worker ausente.');
+    }
+    const pendingReferenceWorker = await bootstrapPendingReferenceRetryWorker(config);
+    pendingReferenceWorker.start(config.worker.pendingReferencePollIntervalMs);
+    process.on('SIGTERM', () => {
+      pendingReferenceWorker.stop();
     });
     return;
   }

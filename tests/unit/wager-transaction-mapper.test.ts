@@ -27,6 +27,8 @@ function buildEntity(overrides: Partial<WagerTransactionEntity> = {}): WagerTran
     failureCode: null,
     processedAt: null,
     createdAt: new Date('2026-08-12T00:00:00.000Z'),
+    pendingReferenceAttempts: 0,
+    pendingReferenceNextAttemptAt: null,
     ...overrides,
   };
 }
@@ -68,6 +70,21 @@ describe('WagerTransactionMapper.toDomain', () => {
     expect(tx.failureCode()).toBe(FailureCode.INSUFFICIENT_FUNDS);
     expect(tx.referenceTransactionId()).toBe('tx-ref-1');
     expect(tx.processedAt()?.toISOString()).toBe(processedAt.toISOString());
+  });
+
+  it('preserva pendingReferenceAttempts e pendingReferenceNextAttemptAt quando presentes', () => {
+    const nextAttemptAt = new Date('2026-08-12T00:10:00.000Z');
+    const entity = buildEntity({
+      status: 'PENDING_REFERENCE',
+      referenceExternalTransactionId: 'ext-bet-1',
+      pendingReferenceAttempts: 3,
+      pendingReferenceNextAttemptAt: nextAttemptAt,
+    });
+
+    const tx = WagerTransactionMapper.toDomain(entity);
+
+    expect(tx.pendingReferenceAttempts()).toBe(3);
+    expect(tx.pendingReferenceNextAttemptAt()?.toISOString()).toBe(nextAttemptAt.toISOString());
   });
 });
 
@@ -120,5 +137,32 @@ describe('WagerTransactionMapper.toEntity', () => {
 
     expect(entity.status).toBe('PROCESSED');
     expect(entity.processedAt?.toISOString()).toBe(processedAt.toISOString());
+  });
+
+  it('serializa pendingReferenceAttempts e pendingReferenceNextAttemptAt apos scheduleReferenceRetry', () => {
+    const tx = WagerTransaction.create({
+      id: 'tx-1',
+      providerId: 'provider-a',
+      externalTransactionId: 'ext-1',
+      idempotencyKey: 'idem-1',
+      payloadHash: 'hash-1',
+      walletId: 'wallet-1',
+      playerId: 'player-1',
+      roundId: 'round-1',
+      kind: WagerTransactionKind.REFUND,
+      referenceExternalTransactionId: 'ext-bet-1',
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      createdAt: new Date('2026-08-12T00:00:00.000Z'),
+    });
+    tx.markPendingReference();
+    const now = new Date('2026-08-12T00:05:00.000Z');
+    tx.scheduleReferenceRetry(now);
+
+    const entity = WagerTransactionMapper.toEntity(tx, null);
+
+    expect(entity.pendingReferenceAttempts).toBe(1);
+    expect(entity.pendingReferenceNextAttemptAt?.toISOString()).toBe(
+      new Date(now.getTime() + 2_000).toISOString(),
+    );
   });
 });
