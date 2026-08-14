@@ -13,16 +13,37 @@ export async function dockerComposeAvailable(): Promise<boolean> {
   }
 }
 
-export async function runDockerCompose(args: readonly string[]): Promise<void> {
+const UP_RETRY_ATTEMPTS = 5;
+const UP_RETRY_DELAY_MS = 2_000;
+
+async function runDockerComposeOnce(args: readonly string[]): Promise<string | undefined> {
   const child = Bun.spawn(['docker', 'compose', ...composeArgs, ...args], {
     stdout: 'pipe',
     stderr: 'pipe',
   });
   const exitCode = await child.exited;
-  if (exitCode !== 0) {
-    const stderr = await new Response(child.stderr).text();
-    throw new Error(`docker compose ${args.join(' ')} falhou: ${stderr}`);
+  if (exitCode === 0) {
+    return undefined;
   }
+  return new Response(child.stderr).text();
+}
+
+export async function runDockerCompose(args: readonly string[]): Promise<void> {
+  const isUp = args[0] === 'up';
+  const attempts = isUp ? UP_RETRY_ATTEMPTS : 1;
+
+  let lastError: string | undefined;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    lastError = await runDockerComposeOnce(args);
+    if (lastError === undefined) {
+      return;
+    }
+    if (isUp && attempt < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, UP_RETRY_DELAY_MS));
+    }
+  }
+
+  throw new Error(`docker compose ${args.join(' ')} falhou: ${lastError}`);
 }
 
 export const hasDockerCompose = await dockerComposeAvailable();

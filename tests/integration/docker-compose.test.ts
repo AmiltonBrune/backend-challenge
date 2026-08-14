@@ -29,13 +29,20 @@ describeIfDocker('docker compose — stack de desenvolvimento', () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it('declara apenas postgres e localstack, com healthcheck', async () => {
+  it('declara a infraestrutura e as roles da aplicação, com healthcheck na infraestrutura', async () => {
     const result = await run(['docker', 'compose', 'config', '--format', 'json']);
     const config = JSON.parse(result.stdout) as {
       services: Record<string, { healthcheck?: unknown }>;
     };
 
-    expect(Object.keys(config.services).sort()).toEqual(['localstack', 'postgres']);
+    expect(Object.keys(config.services).sort()).toEqual([
+      'api',
+      'consumer',
+      'localstack',
+      'migrate',
+      'postgres',
+      'worker',
+    ]);
     expect(config.services['postgres']?.healthcheck).toBeDefined();
     expect(config.services['localstack']?.healthcheck).toBeDefined();
   });
