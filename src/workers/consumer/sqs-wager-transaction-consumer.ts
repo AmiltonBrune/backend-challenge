@@ -1,5 +1,10 @@
+import { randomUUID } from 'node:crypto';
 import { DeleteMessageCommand, ReceiveMessageCommand, type Message, type SQSClient } from '@aws-sdk/client-sqs';
 import type { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
+import type { MetricsPort } from '@application/ports/metrics-port.ts';
+import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
+import { runWithCorrelationId } from '@infrastructure/observability/correlation-context.ts';
+import { logger } from '@infrastructure/observability/logger.ts';
 import { parseWagerTransactionMessage } from './wager-transaction-message.ts';
 
 const DEFAULT_MAX_MESSAGES = 10;
@@ -11,12 +16,14 @@ export interface SqsWagerTransactionConsumerOptions {
   readonly maxMessages?: number;
   readonly waitTimeSeconds?: number;
   readonly visibilityTimeoutSeconds?: number;
+  readonly metrics?: MetricsPort;
 }
 
 export class SqsWagerTransactionConsumer {
   private readonly maxMessages: number;
   private readonly waitTimeSeconds: number;
   private readonly visibilityTimeoutSeconds: number;
+  private readonly metrics: MetricsPort | undefined;
   private running = false;
   private loopPromise: Promise<void> | undefined;
 
@@ -29,6 +36,7 @@ export class SqsWagerTransactionConsumer {
     this.maxMessages = options.maxMessages ?? DEFAULT_MAX_MESSAGES;
     this.waitTimeSeconds = options.waitTimeSeconds ?? DEFAULT_WAIT_TIME_SECONDS;
     this.visibilityTimeoutSeconds = options.visibilityTimeoutSeconds ?? DEFAULT_VISIBILITY_TIMEOUT_SECONDS;
+    this.metrics = options.metrics;
   }
 
   start(): void {
@@ -75,10 +83,33 @@ export class SqsWagerTransactionConsumer {
       return;
     }
 
-    const input = parseWagerTransactionMessage(message.Body);
-    await this.useCase.execute(input);
-    await this.client.send(
-      new DeleteMessageCommand({ QueueUrl: this.queueUrl, ReceiptHandle: message.ReceiptHandle }),
-    );
+    const correlationId = message.MessageId ?? randomUUID();
+    await runWithCorrelationId(correlationId, async () => {
+      const input = parseWagerTransactionMessage(message.Body as string);
+      const result = await this.useCase.execute(input);
+
+      this.metrics?.recordWagerTransaction({
+        kind: input.kind,
+        status: result.status,
+        provider: input.declaredProviderId,
+      });
+      if (result.idempotentReplay) {
+        this.metrics?.recordIdempotentReplay({ provider: input.declaredProviderId });
+      }
+      if (result.status === WagerTransactionStatus.REJECTED && result.failureCode !== undefined) {
+        this.metrics?.recordRejection({ failureCode: result.failureCode });
+      }
+
+      logger.info('mensagem SQS processada', {
+        transactionId: result.transactionId,
+        kind: input.kind,
+        status: result.status,
+        idempotentReplay: result.idempotentReplay,
+      });
+
+      await this.client.send(
+        new DeleteMessageCommand({ QueueUrl: this.queueUrl, ReceiptHandle: message.ReceiptHandle }),
+      );
+    });
   }
 }

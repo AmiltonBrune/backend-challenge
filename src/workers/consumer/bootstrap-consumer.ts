@@ -8,6 +8,7 @@ import { TypeOrmOutboxRepository } from '@infrastructure/persistence/repositorie
 import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
+import { PrometheusMetricsAdapter } from '@infrastructure/observability/prometheus-metrics.ts';
 import { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
 import { SqsWagerTransactionConsumer } from './sqs-wager-transaction-consumer.ts';
 
@@ -38,5 +39,6 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
   return new SqsWagerTransactionConsumer(sqsClient, config.consumer.queueUrl, useCase, {
     maxMessages: config.consumer.maxMessages,
     visibilityTimeoutSeconds: config.consumer.visibilityTimeoutSeconds,
+    metrics: new PrometheusMetricsAdapter(),
   });
 }

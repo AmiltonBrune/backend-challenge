@@ -9,6 +9,7 @@ import { AuthGuard } from '@interface/http/guards/auth.guard.ts';
 import { LivenessState } from '@application/health/liveness-state.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
+import { logger } from '@infrastructure/observability/logger.ts';
 import { bootstrapConsumer } from '@workers/consumer/bootstrap-consumer.ts';
 
 async function bootstrap(): Promise<void> {
@@ -33,7 +34,7 @@ async function bootstrap(): Promise<void> {
       livenessState.markUnhealthy();
       app.close().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`falha ao encerrar a aplicação: ${message}`);
+        logger.error('falha ao encerrar a aplicação', { reason: message });
       });
     });
 
@@ -51,7 +52,7 @@ async function bootstrap(): Promise<void> {
     process.on('SIGTERM', () => {
       consumer.stop().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        console.error(`falha ao encerrar o consumer: ${message}`);
+        logger.error('falha ao encerrar o consumer', { reason: message });
       });
     });
     return;
@@ -62,6 +63,6 @@ async function bootstrap(): Promise<void> {
 
 bootstrap().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`falha no bootstrap: ${message}`);
+  logger.error('falha no bootstrap', { reason: message });
   process.exit(1);
 });
