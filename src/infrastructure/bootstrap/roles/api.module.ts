@@ -5,6 +5,7 @@ import { TypeOrmWalletRepository } from '@infrastructure/persistence/repositorie
 import { TypeOrmWagerTransactionRepository } from '@infrastructure/persistence/repositories/typeorm-wager-transaction-repository.ts';
 import { TypeOrmLedgerRepository } from '@infrastructure/persistence/repositories/typeorm-ledger-repository.ts';
 import { TypeOrmOutboxRepository } from '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts';
+import { TypeOrmInboxRepository } from '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts';
 import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
@@ -16,6 +17,7 @@ import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts'
 import type { Clock } from '@application/ports/clock.ts';
 import type { DatabaseHealthPort } from '@application/ports/database-health-port.ts';
 import type { IdGenerator } from '@application/ports/id-generator.ts';
+import type { InboxRepository } from '@application/ports/inbox-repository.ts';
 import type { LedgerRepository } from '@application/ports/ledger-repository.ts';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
@@ -43,6 +45,7 @@ import {
   DATABASE_HEALTH_CHECK,
   DATA_SOURCE,
   ID_GENERATOR,
+  INBOX_REPOSITORY,
   LEDGER_REPOSITORY,
   OUTBOX_REPOSITORY,
   PROVIDER_IDENTITY,
@@ -114,6 +117,11 @@ import {
       useFactory: (): OutboxRepository => new TypeOrmOutboxRepository(),
     },
     {
+      provide: INBOX_REPOSITORY,
+      useFactory: (clock: Clock): InboxRepository => new TypeOrmInboxRepository(clock),
+      inject: [CLOCK],
+    },
+    {
       provide: OpenWalletUseCase,
       useFactory: (
         unitOfWork: UnitOfWork,
@@ -151,6 +159,7 @@ import {
         wagerTransactionRepository: WagerTransactionRepository,
         ledgerRepository: LedgerRepository,
         outboxRepository: OutboxRepository,
+        inboxRepository: InboxRepository,
         providerIdentity: ProviderIdentityPort,
         clock: Clock,
         idGenerator: IdGenerator,
@@ -161,6 +170,7 @@ import {
           wagerTransactionRepository,
           ledgerRepository,
           outboxRepository,
+          inboxRepository,
           providerIdentity,
           clock,
           idGenerator,
@@ -171,6 +181,7 @@ import {
         WAGER_TRANSACTION_REPOSITORY,
         LEDGER_REPOSITORY,
         OUTBOX_REPOSITORY,
+        INBOX_REPOSITORY,
         PROVIDER_IDENTITY,
         CLOCK,
         ID_GENERATOR,

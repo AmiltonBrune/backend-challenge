@@ -1,5 +1,6 @@
 import type { Clock } from '@application/ports/clock.ts';
 import type { IdGenerator } from '@application/ports/id-generator.ts';
+import type { InboxRepository } from '@application/ports/inbox-repository.ts';
 import type { LedgerRepository } from '@application/ports/ledger-repository.ts';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
@@ -33,6 +34,7 @@ import { LedgerDirection } from '@domain/ledger/ledger-direction.ts';
 import type { WalletLedgerEntry } from '@domain/ledger/wallet-ledger-entry.ts';
 import { Money } from '@domain/money/money.ts';
 import type { MoneyProps } from '@domain/money/money-props.ts';
+import { InboxMessage } from '@domain/messaging/inbox-message.ts';
 import { OutboxMessage } from '@domain/messaging/outbox-message.ts';
 import type { Wallet } from '@domain/wallet/wallet.ts';
 import { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
@@ -74,6 +76,15 @@ export interface ProcessWagerTransactionResult {
   readonly idempotentReplay: boolean;
 }
 
+export interface MessageDeduplicationInput {
+  readonly messageId: string;
+  readonly consumerName: string;
+}
+
+export interface DuplicateMessageResult {
+  readonly duplicateMessage: true;
+}
+
 export class ProcessWagerTransactionUseCase {
   constructor(
     private readonly unitOfWork: UnitOfWork,
@@ -81,12 +92,21 @@ export class ProcessWagerTransactionUseCase {
     private readonly wagerTransactionRepository: WagerTransactionRepository,
     private readonly ledgerRepository: LedgerRepository,
     private readonly outboxRepository: OutboxRepository,
+    private readonly inboxRepository: InboxRepository,
     private readonly providerIdentity: ProviderIdentityPort,
     private readonly clock: Clock,
     private readonly idGenerator: IdGenerator,
   ) {}
 
-  async execute(input: ProcessWagerTransactionInput): Promise<ProcessWagerTransactionResult> {
+  execute(input: ProcessWagerTransactionInput): Promise<ProcessWagerTransactionResult>;
+  execute(
+    input: ProcessWagerTransactionInput,
+    deduplication: MessageDeduplicationInput,
+  ): Promise<ProcessWagerTransactionResult | DuplicateMessageResult>;
+  async execute(
+    input: ProcessWagerTransactionInput,
+    deduplication?: MessageDeduplicationInput,
+  ): Promise<ProcessWagerTransactionResult | DuplicateMessageResult> {
     const providerId = this.providerIdentity.resolveProviderId(input.declaredProviderId);
     const money = Money.from(input.money);
 
@@ -110,7 +130,7 @@ export class ProcessWagerTransactionUseCase {
 
     try {
       return await this.unitOfWork.run((ctx) =>
-        this.processInTransaction(ctx, input, providerId, money, payloadHash),
+        this.processInTransaction(ctx, input, providerId, money, payloadHash, deduplication),
       );
     } catch (error) {
       if (error instanceof IdempotencyKeyConflictError) {
@@ -126,7 +146,22 @@ export class ProcessWagerTransactionUseCase {
     providerId: string,
     money: Money,
     payloadHash: string,
-  ): Promise<ProcessWagerTransactionResult> {
+    deduplication: MessageDeduplicationInput | undefined,
+  ): Promise<ProcessWagerTransactionResult | DuplicateMessageResult> {
+    if (deduplication !== undefined) {
+      const dedupResult = await this.inboxRepository.insert(
+        ctx,
+        InboxMessage.receive({
+          messageId: deduplication.messageId,
+          consumerName: deduplication.consumerName,
+          payloadHash,
+        }),
+      );
+      if (dedupResult === 'already-processed') {
+        return { duplicateMessage: true };
+      }
+    }
+
     const now = this.clock.now();
     const correlationId = this.idGenerator.generate();
     const transactionId = this.idGenerator.generate();
