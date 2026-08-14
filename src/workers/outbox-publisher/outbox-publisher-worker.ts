@@ -1,7 +1,6 @@
 import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
-import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { Clock } from '@application/ports/clock.ts';
 import type { OutboxMessage } from '@domain/messaging/outbox-message.ts';
 
@@ -57,13 +56,14 @@ export class OutboxPublisherWorker {
     await this.unitOfWork.run(async (ctx) => {
       const now = this.clock.now();
       const messages = await this.outboxRepository.reservePending(ctx, this.batchSize, now);
+      await Promise.all(messages.map((message) => this.publishOne(message, now)));
       for (const message of messages) {
-        await this.publishOne(ctx, message, now);
+        await this.outboxRepository.update(ctx, message);
       }
     });
   }
 
-  private async publishOne(ctx: TransactionContext, message: OutboxMessage, now: Date): Promise<void> {
+  private async publishOne(message: OutboxMessage, now: Date): Promise<void> {
     try {
       await this.client.send(
         new SendMessageCommand({
@@ -75,6 +75,5 @@ export class OutboxPublisherWorker {
     } catch {
       message.scheduleRetry(now);
     }
-    await this.outboxRepository.update(ctx, message);
   }
 }

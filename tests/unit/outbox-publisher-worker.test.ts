@@ -177,6 +177,29 @@ describe('OutboxPublisherWorker', () => {
     expect(calls).toHaveLength(1);
   });
 
+  it('publica as mensagens do lote em paralelo, não uma por vez', async () => {
+    const now = new Date('2026-08-12T00:00:00.000Z');
+    const messages = Array.from({ length: 5 }, (_, index) => buildMessage(`evt-${index}`, now));
+    const outboxRepository = fakeOutboxRepository(messages);
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const { client } = fakeSqsClient(async () => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return { MessageId: 'sqs-1' };
+    });
+    const worker = new OutboxPublisherWorker(client, QUEUE_URL, outboxRepository, fakeUnitOfWork(), fakeClock(now), {
+      batchSize: 50,
+    });
+
+    await worker.publishPendingBatch();
+
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(outboxRepository.updated).toHaveLength(5);
+  });
+
   it('inicia e para o loop de polling sem lançar erro', async () => {
     const now = new Date('2026-08-12T00:00:00.000Z');
     const outboxRepository = fakeOutboxRepository([]);
