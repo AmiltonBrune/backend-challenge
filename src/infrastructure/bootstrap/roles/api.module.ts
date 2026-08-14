@@ -1,4 +1,11 @@
-import { Inject, Module, type OnModuleDestroy } from '@nestjs/common';
+import {
+  Inject,
+  Module,
+  type MiddlewareConsumer,
+  type NestModule,
+  type OnModuleDestroy,
+} from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import type { DataSource } from 'typeorm';
 import { TypeOrmUnitOfWork } from '@infrastructure/persistence/repositories/typeorm-unit-of-work.ts';
 import { TypeOrmWalletRepository } from '@infrastructure/persistence/repositories/typeorm-wallet-repository.ts';
@@ -14,6 +21,8 @@ import type { AppConfig } from '@infrastructure/config/app-config.ts';
 import { TypeOrmDatabaseHealthCheck } from '@infrastructure/health/typeorm-database-health-check.ts';
 import { SqsQueueHealthCheck } from '@infrastructure/health/sqs-queue-health-check.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
+import { CorrelationIdMiddleware } from '@infrastructure/observability/correlation-id.middleware.ts';
+import { PrometheusMetricsAdapter } from '@infrastructure/observability/prometheus-metrics.ts';
 import type { Clock } from '@application/ports/clock.ts';
 import type { DatabaseHealthPort } from '@application/ports/database-health-port.ts';
 import type { IdGenerator } from '@application/ports/id-generator.ts';
@@ -22,10 +31,12 @@ import type { LedgerRepository } from '@application/ports/ledger-repository.ts';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
 import type { QueueHealthPort } from '@application/ports/queue-health-port.ts';
+import { METRICS_PORT } from '@application/ports/metrics-port.ts';
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
 import type { WagerTransactionRepository } from '@application/ports/wager-transaction-repository.ts';
 import type { WalletRepository } from '@application/ports/wallet-repository.ts';
 import { LivenessState } from '@application/health/liveness-state.ts';
+import { HttpMetricsInterceptor } from '@interface/http/interceptors/http-metrics.interceptor.ts';
 import {
   CheckReadinessUseCase,
   GetWagerTransactionUseCase,
@@ -39,6 +50,7 @@ import { WalletsController } from '@interface/http/controllers/wallets.controlle
 import { WageringController } from '@interface/http/controllers/wagering.controller.ts';
 import { ProvidersController } from '@interface/http/controllers/providers.controller.ts';
 import { HealthController } from '@interface/http/controllers/health.controller.ts';
+import { MetricsController } from '@interface/http/controllers/metrics.controller.ts';
 import {
   APP_CONFIG,
   CLOCK,
@@ -56,8 +68,22 @@ import {
 } from '../tokens.ts';
 
 @Module({
-  controllers: [WalletsController, WageringController, ProvidersController, HealthController],
+  controllers: [
+    WalletsController,
+    WageringController,
+    ProvidersController,
+    HealthController,
+    MetricsController,
+  ],
   providers: [
+    {
+      provide: METRICS_PORT,
+      useValue: new PrometheusMetricsAdapter(),
+    },
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: HttpMetricsInterceptor,
+    },
     {
       provide: DATA_SOURCE,
       useFactory: async (): Promise<DataSource> => {
@@ -223,8 +249,12 @@ import {
     },
   ],
 })
-export class ApiModule implements OnModuleDestroy {
+export class ApiModule implements OnModuleDestroy, NestModule {
   constructor(@Inject(DATA_SOURCE) private readonly dataSource: DataSource) {}
+
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(CorrelationIdMiddleware).forRoutes('*');
+  }
 
   async onModuleDestroy(): Promise<void> {
     if (this.dataSource.isInitialized) {

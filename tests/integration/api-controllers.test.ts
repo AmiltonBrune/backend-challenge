@@ -404,4 +404,51 @@ describeIfDocker('Superfície HTTP — contra Postgres real', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('GET /metrics retorna 200 em texto Prometheus com wager_transactions_total após uma aposta', async () => {
+    const playerId = crypto.randomUUID();
+    const walletResponse = await fetch(`${api()}/wallets`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ playerId, initialBalance: { amount: '100.00', currency: 'BRL' } }),
+    });
+    const { id: walletId } = (await walletResponse.json()) as { id: string };
+
+    await fetch(`${api()}/wagering/transactions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': crypto.randomUUID() },
+      body: JSON.stringify({
+        providerId: 'provider-metrics',
+        externalTransactionId: crypto.randomUUID(),
+        playerId,
+        walletId,
+        roundId: 'round-1',
+        gameId: 'game-1',
+        kind: 'BET',
+        money: { amount: '25.00', currency: 'BRL' },
+      }),
+    });
+
+    const response = await fetch(`${api()}/metrics`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/plain');
+
+    const body = await response.text();
+    expect(body).toContain('wager_transactions_total{kind="BET",status="PROCESSED",provider="provider-metrics"}');
+    expect(body).toContain('http_request_duration_seconds');
+  });
+
+  it('propaga o X-Correlation-Id recebido de volta na resposta', async () => {
+    const response = await fetch(`${api()}/wagering/transactions/${crypto.randomUUID()}`, {
+      headers: { 'x-correlation-id': 'integration-corr-1' },
+    });
+
+    expect(response.headers.get('x-correlation-id')).toBe('integration-corr-1');
+  });
+
+  it('gera um X-Correlation-Id quando a requisição não envia um', async () => {
+    const response = await fetch(`${api()}/wagering/transactions/${crypto.randomUUID()}`);
+
+    expect(response.headers.get('x-correlation-id')).toBeTruthy();
+  });
 });
