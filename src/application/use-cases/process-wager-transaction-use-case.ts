@@ -74,6 +74,11 @@ export interface ProcessWagerTransactionResult {
   readonly idempotentReplay: boolean;
 }
 
+export interface PendingReferenceRetryPolicy {
+  readonly maxAttempts: number;
+  readonly ttlHours: number;
+}
+
 export class ProcessWagerTransactionUseCase {
   constructor(
     private readonly unitOfWork: UnitOfWork,
@@ -174,130 +179,255 @@ export class ProcessWagerTransactionUseCase {
           return this.holdPendingReference(ctx, transaction, input, providerId, correlationId, now);
         }
 
-        await this.validateReference(ctx, transaction, reference, money, input);
+        await this.validateReference(ctx, transaction, reference);
       }
 
       const balanceBefore = wallet.balance();
-      let entry: WalletLedgerEntry | undefined;
+      const entry = this.applyWalletEffect(wallet, transaction, now, reference);
 
-      if (input.kind === WagerTransactionKind.BET) {
-        entry = wallet.debit({
-          entryId: this.idGenerator.generate(),
-          transactionId,
-          money,
-          createdAt: now,
-        });
-      } else if (input.kind === WagerTransactionKind.WIN || input.kind === WagerTransactionKind.REFUND) {
-        entry = wallet.credit({
-          entryId: this.idGenerator.generate(),
-          transactionId,
-          money,
-          createdAt: now,
-        });
-      } else if (input.kind === WagerTransactionKind.ROLLBACK) {
-        const direction = transaction.ledgerDirectionFor(reference);
-        entry =
-          direction === LedgerDirection.CREDIT
-            ? wallet.credit({ entryId: this.idGenerator.generate(), transactionId, money, createdAt: now })
-            : this.debitForRollback(wallet, transactionId, money, now);
-      }
-
-      if (entry !== undefined) {
-        await this.walletRepository.update(ctx, wallet);
-        await this.ledgerRepository.insert(ctx, entry);
-      }
-
-      transaction.markProcessed(reference?.id, now);
-      await this.wagerTransactionRepository.update(ctx, transaction);
-
-      const events: IntegrationEvent<unknown>[] = [
-        new WagerTransactionProcessed({
-          eventId: this.idGenerator.generate(),
-          aggregateId: transactionId,
-          correlationId,
-          occurredAt: now,
-          data: {
-            transactionId,
-            providerId,
-            externalTransactionId: input.externalTransactionId,
-            walletId: input.walletId,
-            playerId: input.playerId,
-            roundId: input.roundId,
-            gameId: input.gameId,
-            kind: input.kind,
-            money: money.toJSON(),
-            processedAt: now,
-            ...(reference !== undefined ? { referenceTransactionId: reference.id } : {}),
-            ...(entry !== undefined ? { balanceAfter: wallet.balance().toJSON() } : {}),
-          },
-        }),
-      ];
-
-      if (entry !== undefined) {
-        events.push(
-          new WalletBalanceChanged({
-            eventId: this.idGenerator.generate(),
-            aggregateId: input.walletId,
-            correlationId,
-            occurredAt: now,
-            data: {
-              walletId: input.walletId,
-              transactionId,
-              direction: entry.direction,
-              money: money.toJSON(),
-              balanceBefore: balanceBefore.toJSON(),
-              balanceAfter: wallet.balance().toJSON(),
-              walletVersion: wallet.version(),
-            },
-          }),
-        );
-      }
-
-      for (const event of events) {
-        await this.outboxRepository.insert(ctx, OutboxMessage.enqueue(event));
-      }
-
-      return {
-        transactionId,
-        status: WagerTransactionStatus.PROCESSED,
-        balance: wallet.balance().toJSON(),
-        idempotentReplay: false,
-      };
+      return await this.finalizeProcessed(
+        ctx,
+        transaction,
+        input.gameId,
+        providerId,
+        correlationId,
+        now,
+        wallet,
+        entry,
+        balanceBefore,
+        reference,
+      );
     } catch (error) {
       if (!(error instanceof BusinessRuleViolationError)) {
         throw error;
       }
 
-      transaction.reject(error.failureCode);
-      await this.wagerTransactionRepository.update(ctx, transaction);
+      return this.finalizeRejected(ctx, transaction, providerId, error.failureCode, correlationId, now);
+    }
+  }
 
-      const rejectedEvent = new WagerTransactionRejected({
+  async retryPendingReference(
+    ctx: TransactionContext,
+    transaction: WagerTransaction,
+    gameId: string | null,
+    policy: PendingReferenceRetryPolicy,
+    now: Date,
+  ): Promise<ProcessWagerTransactionResult> {
+    const correlationId = this.idGenerator.generate();
+
+    if (this.isPendingReferenceExhausted(transaction, policy, now)) {
+      return this.finalizeRejected(
+        ctx,
+        transaction,
+        transaction.providerId,
+        FailureCode.REFERENCE_NOT_FOUND,
+        correlationId,
+        now,
+      );
+    }
+
+    try {
+      const reference = await this.wagerTransactionRepository.findByProviderAndExternalTransactionId(
+        ctx,
+        transaction.providerId,
+        transaction.referenceExternalTransactionId as string,
+      );
+
+      if (reference === undefined) {
+        transaction.scheduleReferenceRetry(now);
+        await this.wagerTransactionRepository.update(ctx, transaction);
+        return {
+          transactionId: transaction.id,
+          status: WagerTransactionStatus.PENDING_REFERENCE,
+          idempotentReplay: false,
+        };
+      }
+
+      await this.validateReference(ctx, transaction, reference);
+
+      const wallet = await this.walletRepository.findByIdForUpdate(ctx, transaction.walletId);
+      if (wallet === undefined) {
+        throw new WalletNotFoundError(transaction.walletId);
+      }
+
+      const balanceBefore = wallet.balance();
+      const entry = this.applyWalletEffect(wallet, transaction, now, reference);
+
+      return await this.finalizeProcessed(
+        ctx,
+        transaction,
+        gameId,
+        transaction.providerId,
+        correlationId,
+        now,
+        wallet,
+        entry,
+        balanceBefore,
+        reference,
+      );
+    } catch (error) {
+      if (!(error instanceof BusinessRuleViolationError)) {
+        throw error;
+      }
+
+      return this.finalizeRejected(
+        ctx,
+        transaction,
+        transaction.providerId,
+        error.failureCode,
+        correlationId,
+        now,
+      );
+    }
+  }
+
+  private isPendingReferenceExhausted(
+    transaction: WagerTransaction,
+    policy: PendingReferenceRetryPolicy,
+    now: Date,
+  ): boolean {
+    if (transaction.pendingReferenceAttempts() >= policy.maxAttempts) {
+      return true;
+    }
+    const ttlMs = policy.ttlHours * 60 * 60 * 1000;
+    return now.getTime() - transaction.createdAt.getTime() >= ttlMs;
+  }
+
+  private applyWalletEffect(
+    wallet: Wallet,
+    transaction: WagerTransaction,
+    now: Date,
+    reference: WagerTransaction | undefined,
+  ): WalletLedgerEntry | undefined {
+    const { id: transactionId, kind, money } = transaction;
+
+    if (kind === WagerTransactionKind.BET) {
+      return wallet.debit({ entryId: this.idGenerator.generate(), transactionId, money, createdAt: now });
+    }
+    if (kind === WagerTransactionKind.WIN || kind === WagerTransactionKind.REFUND) {
+      return wallet.credit({ entryId: this.idGenerator.generate(), transactionId, money, createdAt: now });
+    }
+    if (kind === WagerTransactionKind.ROLLBACK) {
+      const direction = transaction.ledgerDirectionFor(reference);
+      return direction === LedgerDirection.CREDIT
+        ? wallet.credit({ entryId: this.idGenerator.generate(), transactionId, money, createdAt: now })
+        : this.debitForRollback(wallet, transactionId, money, now);
+    }
+    return undefined;
+  }
+
+  private async finalizeProcessed(
+    ctx: TransactionContext,
+    transaction: WagerTransaction,
+    gameId: string | null,
+    providerId: string,
+    correlationId: string,
+    now: Date,
+    wallet: Wallet,
+    entry: WalletLedgerEntry | undefined,
+    balanceBefore: Money,
+    reference: WagerTransaction | undefined,
+  ): Promise<ProcessWagerTransactionResult> {
+    if (entry !== undefined) {
+      await this.walletRepository.update(ctx, wallet);
+      await this.ledgerRepository.insert(ctx, entry);
+    }
+
+    transaction.markProcessed(reference?.id, now);
+    await this.wagerTransactionRepository.update(ctx, transaction);
+
+    const events: IntegrationEvent<unknown>[] = [
+      new WagerTransactionProcessed({
         eventId: this.idGenerator.generate(),
-        aggregateId: transactionId,
+        aggregateId: transaction.id,
         correlationId,
         occurredAt: now,
         data: {
-          transactionId,
+          transactionId: transaction.id,
           providerId,
-          externalTransactionId: input.externalTransactionId,
-          walletId: input.walletId,
-          playerId: input.playerId,
-          roundId: input.roundId,
-          kind: input.kind,
-          money: money.toJSON(),
-          failureCode: error.failureCode,
-          rejectedAt: now,
+          externalTransactionId: transaction.externalTransactionId,
+          walletId: transaction.walletId,
+          playerId: transaction.playerId,
+          roundId: transaction.roundId,
+          gameId: gameId ?? '',
+          kind: transaction.kind,
+          money: transaction.money.toJSON(),
+          processedAt: now,
+          ...(reference !== undefined ? { referenceTransactionId: reference.id } : {}),
+          ...(entry !== undefined ? { balanceAfter: wallet.balance().toJSON() } : {}),
         },
-      });
-      await this.outboxRepository.insert(ctx, OutboxMessage.enqueue(rejectedEvent));
+      }),
+    ];
 
-      return {
-        transactionId,
-        status: WagerTransactionStatus.REJECTED,
-        failureCode: error.failureCode,
-        idempotentReplay: false,
-      };
+    if (entry !== undefined) {
+      events.push(
+        new WalletBalanceChanged({
+          eventId: this.idGenerator.generate(),
+          aggregateId: transaction.walletId,
+          correlationId,
+          occurredAt: now,
+          data: {
+            walletId: transaction.walletId,
+            transactionId: transaction.id,
+            direction: entry.direction,
+            money: transaction.money.toJSON(),
+            balanceBefore: balanceBefore.toJSON(),
+            balanceAfter: wallet.balance().toJSON(),
+            walletVersion: wallet.version(),
+          },
+        }),
+      );
     }
+
+    for (const event of events) {
+      await this.outboxRepository.insert(ctx, OutboxMessage.enqueue(event));
+    }
+
+    return {
+      transactionId: transaction.id,
+      status: WagerTransactionStatus.PROCESSED,
+      balance: wallet.balance().toJSON(),
+      idempotentReplay: false,
+    };
+  }
+
+  private async finalizeRejected(
+    ctx: TransactionContext,
+    transaction: WagerTransaction,
+    providerId: string,
+    failureCode: FailureCode,
+    correlationId: string,
+    now: Date,
+  ): Promise<ProcessWagerTransactionResult> {
+    transaction.reject(failureCode);
+    await this.wagerTransactionRepository.update(ctx, transaction);
+
+    const rejectedEvent = new WagerTransactionRejected({
+      eventId: this.idGenerator.generate(),
+      aggregateId: transaction.id,
+      correlationId,
+      occurredAt: now,
+      data: {
+        transactionId: transaction.id,
+        providerId,
+        externalTransactionId: transaction.externalTransactionId,
+        walletId: transaction.walletId,
+        playerId: transaction.playerId,
+        roundId: transaction.roundId,
+        kind: transaction.kind,
+        money: transaction.money.toJSON(),
+        failureCode,
+        rejectedAt: now,
+      },
+    });
+    await this.outboxRepository.insert(ctx, OutboxMessage.enqueue(rejectedEvent));
+
+    return {
+      transactionId: transaction.id,
+      status: WagerTransactionStatus.REJECTED,
+      failureCode,
+      idempotentReplay: false,
+    };
   }
 
   private debitForRollback(
@@ -324,45 +454,46 @@ export class ProcessWagerTransactionUseCase {
     ctx: TransactionContext,
     transaction: WagerTransaction,
     reference: WagerTransaction,
-    money: Money,
-    input: ProcessWagerTransactionInput,
   ): Promise<void> {
     if (reference.status() !== WagerTransactionStatus.PROCESSED) {
       throw new ReferenceNotProcessedError(reference.externalTransactionId, reference.status());
     }
 
-    const reversibleKinds = REVERSIBLE_KINDS_BY_KIND[input.kind];
+    const reversibleKinds = REVERSIBLE_KINDS_BY_KIND[transaction.kind];
     if (reversibleKinds === undefined || !reversibleKinds.has(reference.kind)) {
-      throw new ReferenceKindNotReversibleError(reference.kind, input.kind);
+      throw new ReferenceKindNotReversibleError(reference.kind, transaction.kind);
     }
 
-    if (money.toJSON().amount !== reference.money.toJSON().amount) {
-      throw new ReferenceAmountMismatchError(reference.money.toJSON().amount, money.toJSON().amount);
+    if (transaction.money.toJSON().amount !== reference.money.toJSON().amount) {
+      throw new ReferenceAmountMismatchError(
+        reference.money.toJSON().amount,
+        transaction.money.toJSON().amount,
+      );
     }
 
     if (reference.providerId !== transaction.providerId) {
       throw new ReferenceContextMismatchError('providerId');
     }
-    if (reference.playerId !== input.playerId) {
+    if (reference.playerId !== transaction.playerId) {
       throw new ReferenceContextMismatchError('playerId');
     }
-    if (reference.walletId !== input.walletId) {
+    if (reference.walletId !== transaction.walletId) {
       throw new ReferenceContextMismatchError('walletId');
     }
-    if (reference.money.currency !== money.currency) {
+    if (reference.money.currency !== transaction.money.currency) {
       throw new ReferenceContextMismatchError('currency');
     }
-    if (reference.roundId !== input.roundId) {
+    if (reference.roundId !== transaction.roundId) {
       throw new ReferenceContextMismatchError('roundId');
     }
 
     const existingReversal = await this.wagerTransactionRepository.findProcessedReversalByReference(
       ctx,
       reference.id,
-      input.kind,
+      transaction.kind,
     );
     if (existingReversal !== undefined) {
-      throw new ReferenceAlreadyReversedError(reference.externalTransactionId, input.kind);
+      throw new ReferenceAlreadyReversedError(reference.externalTransactionId, transaction.kind);
     }
   }
 

@@ -35,6 +35,8 @@ export class WagerTransaction {
   private _status: WagerTransactionStatus;
   private _failureCode: FailureCode | undefined;
   private _processedAt: Date | undefined;
+  private _pendingReferenceAttempts: number;
+  private _pendingReferenceNextAttemptAt: Date | undefined;
 
   private constructor(props: RehydrateWagerTransactionProps) {
     this.id = props.id;
@@ -53,6 +55,11 @@ export class WagerTransaction {
     this._status = props.status;
     this._failureCode = props.failureCode;
     this._processedAt = props.processedAt === undefined ? undefined : new Date(props.processedAt.getTime());
+    this._pendingReferenceAttempts = props.pendingReferenceAttempts ?? 0;
+    this._pendingReferenceNextAttemptAt =
+      props.pendingReferenceNextAttemptAt === undefined
+        ? undefined
+        : new Date(props.pendingReferenceNextAttemptAt.getTime());
   }
 
   static create(props: CreateWagerTransactionProps): WagerTransaction {
@@ -90,6 +97,16 @@ export class WagerTransaction {
 
   processedAt(): Date | undefined {
     return this._processedAt === undefined ? undefined : new Date(this._processedAt.getTime());
+  }
+
+  pendingReferenceAttempts(): number {
+    return this._pendingReferenceAttempts;
+  }
+
+  pendingReferenceNextAttemptAt(): Date | undefined {
+    return this._pendingReferenceNextAttemptAt === undefined
+      ? undefined
+      : new Date(this._pendingReferenceNextAttemptAt.getTime());
   }
 
   isTerminal(): boolean {
@@ -152,6 +169,16 @@ export class WagerTransaction {
       throw new InvalidTransactionStateError(this._status, 'markPendingReference');
     }
     this._status = WagerTransactionStatus.PENDING_REFERENCE;
+  }
+
+  scheduleReferenceRetry(now: Date): void {
+    if (this._status !== WagerTransactionStatus.PENDING_REFERENCE) {
+      throw new InvalidTransactionStateError(this._status, 'scheduleReferenceRetry');
+    }
+    this._pendingReferenceAttempts += 1;
+    this._pendingReferenceNextAttemptAt = new Date(
+      now.getTime() + 2 ** this._pendingReferenceAttempts * 1000,
+    );
   }
 
   reject(code: FailureCode): void {

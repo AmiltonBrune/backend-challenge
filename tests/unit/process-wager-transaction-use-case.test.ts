@@ -825,3 +825,161 @@ describe('ProcessWagerTransactionUseCase — replay e conflito de idempotência'
     await expect(useCase.execute(input)).rejects.toThrow(ConcurrentIdempotencyProcessingError);
   });
 });
+
+describe('ProcessWagerTransactionUseCase — retryPendingReference', () => {
+  const policy = { maxAttempts: 8, ttlHours: 24 };
+
+  function pendingRefund(
+    overrides: Partial<{ attempts: number; createdAt: Date }> = {},
+  ): WagerTransaction {
+    return WagerTransaction.rehydrate({
+      id: 'tx-pending-1',
+      providerId: 'provider-a',
+      externalTransactionId: 'ext-refund-1',
+      idempotencyKey: 'idem-refund-1',
+      payloadHash: 'hash',
+      walletId: 'wallet-1',
+      playerId: 'player-1',
+      roundId: 'round-1',
+      kind: WagerTransactionKind.REFUND,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      referenceExternalTransactionId: 'ext-bet-1',
+      status: WagerTransactionStatus.PENDING_REFERENCE,
+      createdAt: overrides.createdAt ?? new Date('2026-08-13T00:00:00.000Z'),
+      pendingReferenceAttempts: overrides.attempts ?? 0,
+    });
+  }
+
+  it('resolve e marca PROCESSED quando a referência agora está PROCESSED', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository, ledgerRepository, outboxRepository } =
+      buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '75.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    seedProcessedReference(wagerTransactionRepository);
+    const transaction = pendingRefund();
+    wagerTransactionRepository.store.set(transaction.id, transaction);
+
+    const result = await useCase.retryPendingReference(
+      undefined,
+      transaction,
+      'game-1',
+      policy,
+      new Date('2026-08-13T00:05:00.000Z'),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.PROCESSED);
+    expect(result.balance?.amount).toBe('100.00');
+    expect(ledgerRepository.store[0]?.direction).toBe(LedgerDirection.CREDIT);
+    expect(outboxRepository.store).toHaveLength(2);
+    expect(outboxRepository.store[0]?.eventType).toBe('WagerTransactionProcessed');
+  });
+
+  it('agenda nova tentativa quando a referência ainda não existe', async () => {
+    const { useCase, wagerTransactionRepository, outboxRepository } = buildUseCase();
+    const transaction = pendingRefund({ attempts: 2 });
+    wagerTransactionRepository.store.set(transaction.id, transaction);
+    const now = new Date('2026-08-13T00:05:00.000Z');
+
+    const result = await useCase.retryPendingReference(undefined, transaction, 'game-1', policy, now);
+
+    expect(result.status).toBe(WagerTransactionStatus.PENDING_REFERENCE);
+    expect(transaction.pendingReferenceAttempts()).toBe(3);
+    expect(transaction.pendingReferenceNextAttemptAt()?.toISOString()).toBe(
+      new Date(now.getTime() + 8_000).toISOString(),
+    );
+    expect(outboxRepository.store).toHaveLength(0);
+  });
+
+  it('rejeita com REFERENCE_NOT_FOUND quando maxAttempts foi atingido', async () => {
+    const { useCase, wagerTransactionRepository, outboxRepository } = buildUseCase();
+    const transaction = pendingRefund({ attempts: 8 });
+    wagerTransactionRepository.store.set(transaction.id, transaction);
+
+    const result = await useCase.retryPendingReference(
+      undefined,
+      transaction,
+      'game-1',
+      policy,
+      new Date('2026-08-13T00:05:00.000Z'),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_NOT_FOUND);
+    expect(transaction.status()).toBe(WagerTransactionStatus.REJECTED);
+    expect(outboxRepository.store).toHaveLength(1);
+    expect(outboxRepository.store[0]?.eventType).toBe('WagerTransactionRejected');
+  });
+
+  it('rejeita com REFERENCE_NOT_FOUND quando o TTL de 24h expirou, mesmo com poucas tentativas', async () => {
+    const { useCase, wagerTransactionRepository } = buildUseCase();
+    const transaction = pendingRefund({
+      attempts: 1,
+      createdAt: new Date('2026-08-10T00:00:00.000Z'),
+    });
+    wagerTransactionRepository.store.set(transaction.id, transaction);
+
+    const result = await useCase.retryPendingReference(
+      undefined,
+      transaction,
+      'game-1',
+      policy,
+      new Date('2026-08-13T00:05:00.000Z'),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_NOT_FOUND);
+  });
+
+  it('propaga a rejeição de negócio quando a referência viola uma regra (ex.: já revertida)', async () => {
+    const { useCase, walletRepository, wagerTransactionRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    const reference = seedProcessedReference(wagerTransactionRepository);
+    const firstRefund = WagerTransaction.rehydrate({
+      id: 'refund-anterior',
+      providerId: 'provider-a',
+      externalTransactionId: 'ext-refund-anterior',
+      idempotencyKey: 'idem-refund-anterior',
+      payloadHash: 'hash',
+      walletId: 'wallet-1',
+      playerId: 'player-1',
+      roundId: 'round-1',
+      kind: WagerTransactionKind.REFUND,
+      money: Money.from({ amount: '25.00', currency: 'BRL' }),
+      referenceExternalTransactionId: 'ext-bet-1',
+      referenceTransactionId: reference.id,
+      status: WagerTransactionStatus.PROCESSED,
+      processedAt: new Date(),
+      createdAt: new Date(),
+    });
+    wagerTransactionRepository.store.set(firstRefund.id, firstRefund);
+
+    const transaction = pendingRefund();
+    wagerTransactionRepository.store.set(transaction.id, transaction);
+
+    const result = await useCase.retryPendingReference(
+      undefined,
+      transaction,
+      'game-1',
+      policy,
+      new Date('2026-08-13T00:05:00.000Z'),
+    );
+
+    expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    expect(result.failureCode).toBe(FailureCode.REFERENCE_ALREADY_REVERSED);
+  });
+});

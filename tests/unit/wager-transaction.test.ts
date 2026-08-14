@@ -347,6 +347,94 @@ describe('createdAt e processedAt — imutabilidade', () => {
   });
 });
 
+describe('pendingReferenceAttempts e pendingReferenceNextAttemptAt', () => {
+  it('comecam em 0 e undefined para uma transacao recem-criada', () => {
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+
+    expect(tx.pendingReferenceAttempts()).toBe(0);
+    expect(tx.pendingReferenceNextAttemptAt()).toBeUndefined();
+  });
+});
+
+describe('scheduleReferenceRetry', () => {
+  const now = new Date('2026-08-12T00:10:00.000Z');
+
+  it('lanca quando o status nao e PENDING_REFERENCE', () => {
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+
+    expect(() => tx.scheduleReferenceRetry(now)).toThrow(InvalidTransactionStateError);
+  });
+
+  it('incrementa attempts e agenda nextAttemptAt com backoff 2^attempts segundos', () => {
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+    tx.markPendingReference();
+
+    tx.scheduleReferenceRetry(now);
+
+    expect(tx.pendingReferenceAttempts()).toBe(1);
+    expect(tx.pendingReferenceNextAttemptAt()?.toISOString()).toBe(
+      new Date(now.getTime() + 2_000).toISOString(),
+    );
+  });
+
+  it('cada chamada sucessiva dobra o backoff a partir de attempts atualizado', () => {
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+    tx.markPendingReference();
+
+    tx.scheduleReferenceRetry(now);
+    tx.scheduleReferenceRetry(now);
+    tx.scheduleReferenceRetry(now);
+
+    expect(tx.pendingReferenceAttempts()).toBe(3);
+    expect(tx.pendingReferenceNextAttemptAt()?.toISOString()).toBe(
+      new Date(now.getTime() + 8_000).toISOString(),
+    );
+  });
+
+  it('permanece em PENDING_REFERENCE apos agendar nova tentativa', () => {
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+    tx.markPendingReference();
+
+    tx.scheduleReferenceRetry(now);
+
+    expect(tx.status()).toBe(WagerTransactionStatus.PENDING_REFERENCE);
+    expect(tx.isTerminal()).toBe(false);
+  });
+
+  it('lanca a partir de estado terminal', () => {
+    const tx = WagerTransaction.create(baseProps(WagerTransactionKind.REFUND, 'tx-bet'));
+    tx.markPendingReference();
+    tx.reject(FailureCode.REFERENCE_NOT_FOUND);
+
+    expect(() => tx.scheduleReferenceRetry(now)).toThrow(InvalidTransactionStateError);
+  });
+});
+
+describe('WagerTransaction.rehydrate — pendingReferenceAttempts/pendingReferenceNextAttemptAt', () => {
+  it('reconstroi os campos de retencao quando informados', () => {
+    const nextAttemptAt = new Date('2026-08-12T00:05:00.000Z');
+    const tx = WagerTransaction.rehydrate({
+      ...baseProps(WagerTransactionKind.REFUND, 'tx-bet'),
+      status: WagerTransactionStatus.PENDING_REFERENCE,
+      pendingReferenceAttempts: 3,
+      pendingReferenceNextAttemptAt: nextAttemptAt,
+    });
+
+    expect(tx.pendingReferenceAttempts()).toBe(3);
+    expect(tx.pendingReferenceNextAttemptAt()?.toISOString()).toBe(nextAttemptAt.toISOString());
+  });
+
+  it('assume 0 e undefined quando nao informados', () => {
+    const tx = WagerTransaction.rehydrate({
+      ...baseProps(WagerTransactionKind.BET),
+      status: WagerTransactionStatus.PENDING,
+    });
+
+    expect(tx.pendingReferenceAttempts()).toBe(0);
+    expect(tx.pendingReferenceNextAttemptAt()).toBeUndefined();
+  });
+});
+
 describe('WagerTransaction.rehydrate', () => {
   it('reconstroi sem revalidar — REFUND sem referencia nao lanca', () => {
     expect(() =>
