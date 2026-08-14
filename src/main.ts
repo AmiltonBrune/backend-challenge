@@ -10,6 +10,7 @@ import { LivenessState } from '@application/health/liveness-state.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
 import { bootstrapConsumer } from '@workers/consumer/bootstrap-consumer.ts';
+import { bootstrapOutboxPublisher } from '@workers/outbox-publisher/bootstrap-outbox-publisher.ts';
 
 async function bootstrap(): Promise<void> {
   const role = resolveAppRole(process.env['APP_ROLE']);
@@ -52,6 +53,18 @@ async function bootstrap(): Promise<void> {
       consumer.stop().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`falha ao encerrar o consumer: ${message}`);
+      });
+    });
+    return;
+  }
+
+  if (role === 'worker') {
+    const outboxPublisher = await bootstrapOutboxPublisher(config);
+    outboxPublisher.start();
+    process.on('SIGTERM', () => {
+      outboxPublisher.stop().catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error(`falha ao encerrar o outbox publisher: ${message}`);
       });
     });
     return;
