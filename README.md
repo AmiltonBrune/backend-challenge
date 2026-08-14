@@ -10,6 +10,7 @@ canal de mensageria.
 - [Bun](https://bun.com) 1.3+ como runtime, gerenciador de pacotes e test runner
 - TypeScript em modo estrito
 - NestJS (camada HTTP e injeção de dependência)
+- `@nestjs/swagger` — documentação OpenAPI interativa em `/docs`
 - TypeORM + PostgreSQL
 - AWS SDK v3 (`@aws-sdk/client-sqs`) + LocalStack para SQS em dev/teste
 - [k6](https://k6.io) para o teste de carga (ferramenta externa, não é dependência do projeto)
@@ -30,6 +31,9 @@ A API fica disponível em `http://localhost:3000`:
 curl http://localhost:3000/health/live
 curl http://localhost:3000/health/ready
 ```
+
+Documentação interativa (Swagger UI) em `http://localhost:3000/docs`, com o schema
+OpenAPI cru em `http://localhost:3000/docs-json`.
 
 Acompanhar logs de uma role específica:
 

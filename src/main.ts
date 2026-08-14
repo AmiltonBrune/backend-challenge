@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { resolveAppRole } from '@infrastructure/bootstrap/app-role.ts';
 import { selectRoleModule } from '@infrastructure/bootstrap/select-role-module.ts';
+import { setupSwagger } from '@infrastructure/bootstrap/setup-swagger.ts';
 import { loadConfig } from '@infrastructure/config/load-config.ts';
 import { DomainExceptionFilter } from '@interface/http/exceptions/domain-exception-filter.ts';
 import { AuthGuard } from '@interface/http/guards/auth.guard.ts';
@@ -32,6 +33,7 @@ async function bootstrap(): Promise<void> {
     );
     app.useGlobalFilters(new DomainExceptionFilter());
     app.useGlobalGuards(new AuthGuard());
+    setupSwagger(app);
 
     const livenessState = app.get(LivenessState);
     process.on('SIGTERM', () => {
