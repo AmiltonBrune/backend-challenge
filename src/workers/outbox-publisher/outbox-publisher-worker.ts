@@ -1,0 +1,80 @@
+import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
+import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
+import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
+import type { TransactionContext } from '@application/ports/transaction-context.ts';
+import type { Clock } from '@application/ports/clock.ts';
+import type { OutboxMessage } from '@domain/messaging/outbox-message.ts';
+
+const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_POLL_INTERVAL_MS = 500;
+
+export interface OutboxPublisherWorkerOptions {
+  readonly batchSize?: number;
+  readonly pollIntervalMs?: number;
+}
+
+export class OutboxPublisherWorker {
+  private readonly batchSize: number;
+  private readonly pollIntervalMs: number;
+  private running = false;
+  private loopPromise: Promise<void> | undefined;
+
+  constructor(
+    private readonly client: SQSClient,
+    private readonly queueUrl: string,
+    private readonly outboxRepository: OutboxRepository,
+    private readonly unitOfWork: UnitOfWork,
+    private readonly clock: Clock,
+    options: OutboxPublisherWorkerOptions = {},
+  ) {
+    this.batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
+    this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  }
+
+  start(): void {
+    if (this.running) {
+      return;
+    }
+    this.running = true;
+    this.loopPromise = this.loop();
+  }
+
+  async stop(): Promise<void> {
+    this.running = false;
+    if (this.loopPromise !== undefined) {
+      await this.loopPromise;
+    }
+  }
+
+  private async loop(): Promise<void> {
+    while (this.running) {
+      await this.publishPendingBatch().catch(() => undefined);
+      await new Promise((resolve) => setTimeout(resolve, this.pollIntervalMs));
+    }
+  }
+
+  async publishPendingBatch(): Promise<void> {
+    await this.unitOfWork.run(async (ctx) => {
+      const now = this.clock.now();
+      const messages = await this.outboxRepository.reservePending(ctx, this.batchSize, now);
+      for (const message of messages) {
+        await this.publishOne(ctx, message, now);
+      }
+    });
+  }
+
+  private async publishOne(ctx: TransactionContext, message: OutboxMessage, now: Date): Promise<void> {
+    try {
+      await this.client.send(
+        new SendMessageCommand({
+          QueueUrl: this.queueUrl,
+          MessageBody: JSON.stringify(message.payload),
+        }),
+      );
+      message.markPublished(now);
+    } catch {
+      message.scheduleRetry(now);
+    }
+    await this.outboxRepository.update(ctx, message);
+  }
+}

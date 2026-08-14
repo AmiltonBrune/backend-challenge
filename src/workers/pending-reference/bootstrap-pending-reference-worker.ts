@@ -4,6 +4,7 @@ import { TypeOrmWalletRepository } from '@infrastructure/persistence/repositorie
 import { TypeOrmWagerTransactionRepository } from '@infrastructure/persistence/repositories/typeorm-wager-transaction-repository.ts';
 import { TypeOrmLedgerRepository } from '@infrastructure/persistence/repositories/typeorm-ledger-repository.ts';
 import { TypeOrmOutboxRepository } from '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts';
+import { TypeOrmInboxRepository } from '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts';
 import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
@@ -32,6 +33,7 @@ export async function bootstrapPendingReferenceRetryWorker(
     wagerTransactionRepository,
     new TypeOrmLedgerRepository(),
     new TypeOrmOutboxRepository(),
+    new TypeOrmInboxRepository(clock),
     new DeclaredProviderIdentity(),
     clock,
     new UuidIdGenerator(),

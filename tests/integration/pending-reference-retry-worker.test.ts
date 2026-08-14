@@ -106,6 +106,9 @@ describeIfDocker('PendingReferenceRetryWorker — contra Postgres real', () => {
     const { TypeOrmOutboxRepository } = await import(
       '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts'
     );
+    const { TypeOrmInboxRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts'
+    );
     const { UuidIdGenerator } = await import('@infrastructure/uuid-id-generator.ts');
     const { ProcessWagerTransactionUseCase } = await import(
       '@application/use-cases/process-wager-transaction-use-case.ts'
@@ -121,6 +124,7 @@ describeIfDocker('PendingReferenceRetryWorker — contra Postgres real', () => {
       new TypeOrmWagerTransactionRepository(),
       new TypeOrmLedgerRepository(),
       new TypeOrmOutboxRepository(),
+      new TypeOrmInboxRepository(clock),
       new DeclaredIdentity(),
       clock,
       new UuidIdGenerator(),
