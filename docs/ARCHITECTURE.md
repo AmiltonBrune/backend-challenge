@@ -227,9 +227,8 @@ src/
 │   ├── observability/       # logger, métricas, tracing
 │   └── config/
 ├── interface/
-│   ├── http/                # controllers, DTOs, filtros de exceção
-│   └── sqs/                 # consumer adapter
-└── workers/                 # outbox publisher, pending-reference retrier
+│   └── http/                # controllers, DTOs, filtros de exceção, Swagger
+└── workers/                 # consumer SQS, outbox publisher, pending-reference retrier
 ```
 
 ---
@@ -1779,6 +1778,24 @@ Readiness apenas remove a instância do roteamento até que a dependência volte
 
 `INSUFFICIENT_FUNDS` deliberadamente **não** gera alarme: é fluxo normal e frequente.
 
+### 14.3 Métricas, dashboards e tracing
+
+Logs estruturados em JSON com `correlationId` propagado por `AsyncLocalStorage`
+(sem precisar passá-lo por parâmetro em cada função). Métricas via `MetricsPort`
+(porta) e `PrometheusMetricsAdapter` (`prom-client`), cobrindo transações por
+tipo/status/provedor, replays e conflitos de idempotência, rejeições por
+`failureCode`, latência HTTP e publicação do outbox.
+
+As roles `consumer` e `worker` não têm servidor HTTP próprio, então cada uma
+sobe um servidor HTTP mínimo só para expor `/metrics` (`METRICS_PORT`, padrão
+`9464`); a role `api` expõe no mesmo servidor Nest, porta `3000`.
+
+Tracing distribuído via OpenTelemetry, com instrumentação automática de `http`
+e `pg` (`@opentelemetry/instrumentation-http`/`-pg`), exportando via OTLP.
+`docker-compose.yml` sobe Prometheus, Grafana e Tempo pré-configurados junto
+com a aplicação — scrape config, datasources e um dashboard já provisionados,
+sem passo manual.
+
 ---
 
 ## 15. Estratégia de testes
@@ -1927,6 +1944,5 @@ cortado com justificativa é priorização.
 | 5 | Sem partidas dobradas | Declarado como diferencial opcional, não requisito | Conta de contrapartida por provedor |
 | 6 | Reversão parcial não suportada | Fora de escopo pelo enunciado | Exigiria controlar saldo remanescente por referência |
 | 7 | Multi-moeda modelado mas não operado | Redução de escopo; conflitos de moeda são testados | Nenhuma mudança estrutural necessária |
-| 8 | Sem OpenTelemetry nem dashboard | Declarados como opcionais | Instrumentação sobre o `correlationId` já propagado |
-| 9 | Outbox depende de polling | `LISTEN/NOTIFY` reduziria latência mas não substitui o polling, pois a notificação se perde sem ouvinte | Híbrido: notificação como gatilho, polling como rede de segurança |
-| 10 | Publicação de eventos é at-least-once | Exactly-once de ponta a ponta exige transação distribuída com o broker | Consumidores deduplicam por `eventId` |
+| 8 | Outbox depende de polling | `LISTEN/NOTIFY` reduziria latência mas não substitui o polling, pois a notificação se perde sem ouvinte | Híbrido: notificação como gatilho, polling como rede de segurança |
+| 9 | Publicação de eventos é at-least-once | Exactly-once de ponta a ponta exige transação distribuída com o broker | Consumidores deduplicam por `eventId` |
