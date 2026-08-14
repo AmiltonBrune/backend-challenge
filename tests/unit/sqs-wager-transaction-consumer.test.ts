@@ -6,7 +6,14 @@ import {
   type SQSClient,
 } from '@aws-sdk/client-sqs';
 import type { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
+import type {
+  ProviderMetricInput,
+  RejectionMetricInput,
+  WagerTransactionMetricInput,
+} from '@application/ports/metrics-port.ts';
+import type { MetricsPort } from '@application/ports/metrics-port.ts';
 import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
+import { getCorrelationId } from '@infrastructure/observability/correlation-context.ts';
 import { SqsWagerTransactionConsumer } from '@workers/consumer/sqs-wager-transaction-consumer.ts';
 
 const QUEUE_URL = 'http://localhost:4566/000000000000/wager-transactions.fifo';
@@ -168,5 +175,76 @@ describe('SqsWagerTransactionConsumer', () => {
 
     const deleteCalls = calls.filter((call) => call.command === 'DeleteMessageCommand');
     expect(deleteCalls).toHaveLength(0);
+  });
+
+  it('processa a mensagem dentro de um contexto de correlationId derivado do MessageId', async () => {
+    const message: Message = { MessageId: 'm-correlation-1', ReceiptHandle: 'receipt-1', Body: validMessageBody() };
+    const { client } = fakeSqsClient([message]);
+    let observedCorrelationId: string | undefined;
+    const useCase = fakeUseCase(async () => {
+      observedCorrelationId = getCorrelationId();
+      return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
+    });
+
+    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase);
+
+    await consumer.receiveAndProcessBatch();
+
+    expect(observedCorrelationId).toBe('m-correlation-1');
+  });
+
+  function recordingMetrics(): {
+    metrics: MetricsPort;
+    transactions: WagerTransactionMetricInput[];
+    rejections: RejectionMetricInput[];
+    replays: ProviderMetricInput[];
+  } {
+    const transactions: WagerTransactionMetricInput[] = [];
+    const rejections: RejectionMetricInput[] = [];
+    const replays: ProviderMetricInput[] = [];
+    const metrics: MetricsPort = {
+      recordWagerTransaction: (input) => transactions.push(input),
+      recordIdempotentReplay: (input) => replays.push(input),
+      recordIdempotencyConflict: () => {},
+      recordRejection: (input) => rejections.push(input),
+      observeHttpRequestDuration: () => {},
+      exposition: async () => ({ contentType: '', body: '' }),
+    };
+    return { metrics, transactions, rejections, replays };
+  }
+
+  it('registra wager_transactions_total quando um MetricsPort é fornecido', async () => {
+    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: validMessageBody() };
+    const { client } = fakeSqsClient([message]);
+    const useCase = fakeUseCase(async () => ({
+      transactionId: 't1',
+      status: WagerTransactionStatus.PROCESSED,
+      idempotentReplay: false,
+    }));
+    const { metrics, transactions } = recordingMetrics();
+
+    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase, { metrics });
+
+    await consumer.receiveAndProcessBatch();
+
+    expect(transactions).toEqual([{ kind: 'BET', status: 'PROCESSED', provider: 'provider-a' }]);
+  });
+
+  it('registra wager_rejections_total quando a transação é rejeitada', async () => {
+    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: validMessageBody() };
+    const { client } = fakeSqsClient([message]);
+    const useCase = fakeUseCase(async () => ({
+      transactionId: 't1',
+      status: WagerTransactionStatus.REJECTED,
+      failureCode: 'INSUFFICIENT_FUNDS',
+      idempotentReplay: false,
+    }));
+    const { metrics, rejections } = recordingMetrics();
+
+    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase, { metrics });
+
+    await consumer.receiveAndProcessBatch();
+
+    expect(rejections).toEqual([{ failureCode: 'INSUFFICIENT_FUNDS' }]);
   });
 });
