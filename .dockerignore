@@ -1,0 +1,12 @@
+node_modules
+dist
+build
+coverage
+logs
+*.log
+.env
+.env.*
+!.env.example
+.git
+.claude
+docs
