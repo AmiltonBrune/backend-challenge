@@ -1,3 +1,4 @@
+import '@infrastructure/observability/tracing-bootstrap.ts';
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
@@ -10,6 +11,7 @@ import { LivenessState } from '@application/health/liveness-state.ts';
 import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { ensureWagerQueues } from '@infrastructure/messaging/ensure-wager-queues.ts';
 import { logger } from '@infrastructure/observability/logger.ts';
+import { startMetricsHttpServer } from '@infrastructure/observability/metrics-http-server.ts';
 import { bootstrapConsumer } from '@workers/consumer/bootstrap-consumer.ts';
 import { bootstrapPendingReferenceRetryWorker } from '@workers/pending-reference/bootstrap-pending-reference-worker.ts';
 import { bootstrapOutboxPublisher } from '@workers/outbox-publisher/bootstrap-outbox-publisher.ts';
@@ -49,9 +51,11 @@ async function bootstrap(): Promise<void> {
   }
 
   if (role === 'consumer') {
-    const consumer = await bootstrapConsumer(config);
+    const { consumer, metrics } = await bootstrapConsumer(config);
+    const metricsServer = startMetricsHttpServer(config.metricsPort, metrics);
     consumer.start();
     process.on('SIGTERM', () => {
+      metricsServer.close().catch(() => undefined);
       consumer.stop().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         logger.error('falha ao encerrar o consumer', { reason: message });
@@ -65,7 +69,8 @@ async function bootstrap(): Promise<void> {
       throw new Error('Configuração do worker ausente.');
     }
 
-    const outboxPublisher = await bootstrapOutboxPublisher(config);
+    const { worker: outboxPublisher, metrics } = await bootstrapOutboxPublisher(config);
+    const metricsServer = startMetricsHttpServer(config.metricsPort, metrics);
     outboxPublisher.start();
 
     const pendingReferenceWorker = await bootstrapPendingReferenceRetryWorker(config);
@@ -73,6 +78,7 @@ async function bootstrap(): Promise<void> {
 
     process.on('SIGTERM', () => {
       pendingReferenceWorker.stop();
+      metricsServer.close().catch(() => undefined);
       outboxPublisher.stop().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
         console.error(`falha ao encerrar o outbox publisher: ${message}`);

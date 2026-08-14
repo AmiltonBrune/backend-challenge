@@ -11,6 +11,7 @@ function fakeMetricsPort(): { metrics: MetricsPort; observed: HttpRequestDuratio
     recordIdempotentReplay: () => {},
     recordIdempotencyConflict: () => {},
     recordRejection: () => {},
+    recordOutboxPublish: () => {},
     observeHttpRequestDuration: (input) => {
       observed.push(input);
     },

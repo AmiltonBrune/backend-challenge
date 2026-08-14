@@ -2,6 +2,7 @@ import { SendMessageCommand, type SQSClient } from '@aws-sdk/client-sqs';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
 import type { Clock } from '@application/ports/clock.ts';
+import type { MetricsPort } from '@application/ports/metrics-port.ts';
 import type { OutboxMessage } from '@domain/messaging/outbox-message.ts';
 
 const DEFAULT_BATCH_SIZE = 50;
@@ -10,11 +11,13 @@ const DEFAULT_POLL_INTERVAL_MS = 500;
 export interface OutboxPublisherWorkerOptions {
   readonly batchSize?: number;
   readonly pollIntervalMs?: number;
+  readonly metrics?: MetricsPort;
 }
 
 export class OutboxPublisherWorker {
   private readonly batchSize: number;
   private readonly pollIntervalMs: number;
+  private readonly metrics: MetricsPort | undefined;
   private running = false;
   private loopPromise: Promise<void> | undefined;
 
@@ -28,6 +31,7 @@ export class OutboxPublisherWorker {
   ) {
     this.batchSize = options.batchSize ?? DEFAULT_BATCH_SIZE;
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+    this.metrics = options.metrics;
   }
 
   start(): void {
@@ -72,8 +76,10 @@ export class OutboxPublisherWorker {
         }),
       );
       message.markPublished(now);
+      this.metrics?.recordOutboxPublish({ status: 'published' });
     } catch {
       message.scheduleRetry(now);
+      this.metrics?.recordOutboxPublish({ status: 'failed' });
     }
   }
 }

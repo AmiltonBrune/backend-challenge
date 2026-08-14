@@ -4,6 +4,15 @@ import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
 import type { UnitOfWork } from '@application/ports/unit-of-work.ts';
 import type { Clock } from '@application/ports/clock.ts';
+import type {
+  HttpRequestDurationInput,
+  MetricsExposition,
+  MetricsPort,
+  OutboxPublishMetricInput,
+  ProviderMetricInput,
+  RejectionMetricInput,
+  WagerTransactionMetricInput,
+} from '@application/ports/metrics-port.ts';
 import { Money } from '@domain/money/money.ts';
 import { WagerTransactionKind } from '@domain/wager-transaction/wager-transaction-kind.ts';
 import { WagerTransactionProcessed } from '@domain/events/wager-transaction-processed.ts';
@@ -82,6 +91,24 @@ function fakeOutboxRepository(initial: OutboxMessage[]): OutboxRepository & { up
 
 function fakeClock(now: Date): Clock {
   return { now: () => now };
+}
+
+function fakeMetrics(): MetricsPort & { recorded: OutboxPublishMetricInput[] } {
+  const recorded: OutboxPublishMetricInput[] = [];
+  return {
+    recorded,
+    recordWagerTransaction(_input: WagerTransactionMetricInput): void {},
+    recordIdempotentReplay(_input: ProviderMetricInput): void {},
+    recordIdempotencyConflict(_input: ProviderMetricInput): void {},
+    recordRejection(_input: RejectionMetricInput): void {},
+    observeHttpRequestDuration(_input: HttpRequestDurationInput): void {},
+    recordOutboxPublish(input: OutboxPublishMetricInput): void {
+      recorded.push(input);
+    },
+    async exposition(): Promise<MetricsExposition> {
+      return { contentType: 'text/plain', body: '' };
+    },
+  };
 }
 
 describe('OutboxPublisherWorker', () => {
@@ -198,6 +225,30 @@ describe('OutboxPublisherWorker', () => {
 
     expect(maxInFlight).toBeGreaterThan(1);
     expect(outboxRepository.updated).toHaveLength(5);
+  });
+
+  it('registra métrica de outbox por mensagem publicada ou com falha', async () => {
+    const now = new Date('2026-08-12T00:00:00.000Z');
+    const goodMessage = buildMessage('evt-good', now);
+    const badMessage = buildMessage('evt-bad', now);
+    const outboxRepository = fakeOutboxRepository([goodMessage, badMessage]);
+    const { client } = fakeSqsClient(async (input) => {
+      const body = JSON.parse(input.MessageBody ?? '{}') as { eventId: string };
+      if (body.eventId === 'evt-bad') {
+        throw new Error('falha simulada');
+      }
+      return { MessageId: 'sqs-1' };
+    });
+    const metrics = fakeMetrics();
+    const worker = new OutboxPublisherWorker(client, QUEUE_URL, outboxRepository, fakeUnitOfWork(), fakeClock(now), {
+      metrics,
+    });
+
+    await worker.publishPendingBatch();
+
+    expect(metrics.recorded).toHaveLength(2);
+    expect(metrics.recorded).toContainEqual({ status: 'published' });
+    expect(metrics.recorded).toContainEqual({ status: 'failed' });
   });
 
   it('inicia e para o loop de polling sem lançar erro', async () => {

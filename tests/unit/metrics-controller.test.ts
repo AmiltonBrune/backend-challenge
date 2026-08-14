@@ -9,6 +9,7 @@ function fakeMetricsPort(exposition: MetricsExposition): MetricsPort {
     recordIdempotencyConflict: () => {},
     recordRejection: () => {},
     observeHttpRequestDuration: () => {},
+    recordOutboxPublish: () => {},
     exposition: async () => exposition,
   };
 }

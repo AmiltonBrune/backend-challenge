@@ -83,6 +83,7 @@ export function loadConfig(env: Env, role: AppRole): AppConfig {
   const collector = new RequiredVarCollector(env);
 
   const port = collector.optionalInt('PORT', 3000);
+  const metricsPort = collector.optionalInt('METRICS_PORT', 9464);
   const databaseUrl = collector.require('DATABASE_URL');
   const dbPoolSize = collector.optionalInt('DB_POOL_SIZE', 10);
   const dbStatementTimeoutMs = collector.optionalInt('DB_STATEMENT_TIMEOUT_MS', 5000);
@@ -99,6 +100,7 @@ export function loadConfig(env: Env, role: AppRole): AppConfig {
 
   return {
     port,
+    metricsPort,
     databaseUrl,
     dbPoolSize,
     dbStatementTimeoutMs,

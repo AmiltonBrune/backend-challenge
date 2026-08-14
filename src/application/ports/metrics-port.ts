@@ -19,6 +19,10 @@ export interface HttpRequestDurationInput {
   readonly durationSeconds: number;
 }
 
+export interface OutboxPublishMetricInput {
+  readonly status: 'published' | 'failed';
+}
+
 export interface MetricsExposition {
   readonly contentType: string;
   readonly body: string;
@@ -30,6 +34,7 @@ export interface MetricsPort {
   recordIdempotencyConflict(input: ProviderMetricInput): void;
   recordRejection(input: RejectionMetricInput): void;
   observeHttpRequestDuration(input: HttpRequestDurationInput): void;
+  recordOutboxPublish(input: OutboxPublishMetricInput): void;
   exposition(): Promise<MetricsExposition>;
 }
 

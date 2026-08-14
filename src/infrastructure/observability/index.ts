@@ -3,3 +3,5 @@ export { CorrelationIdMiddleware } from './correlation-id.middleware.ts';
 export { logger } from './logger.ts';
 export type { LogLevel, LogMeta } from './logger.ts';
 export { PrometheusMetricsAdapter } from './prometheus-metrics.ts';
+export { startMetricsHttpServer } from './metrics-http-server.ts';
+export type { MetricsHttpServer } from './metrics-http-server.ts';
