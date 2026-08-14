@@ -204,6 +204,7 @@ describe('SqsWagerTransactionConsumer', () => {
       recordIdempotencyConflict: () => {},
       recordRejection: (input) => rejections.push(input),
       observeHttpRequestDuration: () => {},
+      recordOutboxPublish: () => {},
       exposition: async () => ({ contentType: '', body: '' }),
     };
     return { metrics, transactions, rejections, replays };

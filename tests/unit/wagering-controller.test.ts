@@ -40,6 +40,7 @@ function recordingMetrics(): {
     recordIdempotencyConflict: (input) => conflicts.push(input),
     recordRejection: (input) => rejections.push(input),
     observeHttpRequestDuration: () => {},
+    recordOutboxPublish: () => {},
     exposition: async () => ({ contentType: '', body: '' }),
   };
   return { metrics, transactions, replays, conflicts, rejections };

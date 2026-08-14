@@ -10,10 +10,16 @@ import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
 import { PrometheusMetricsAdapter } from '@infrastructure/observability/prometheus-metrics.ts';
+import type { MetricsPort } from '@application/ports/metrics-port.ts';
 import { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
 import { SqsWagerTransactionConsumer } from './sqs-wager-transaction-consumer.ts';
 
-export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTransactionConsumer> {
+export interface BootstrappedConsumer {
+  readonly consumer: SqsWagerTransactionConsumer;
+  readonly metrics: MetricsPort;
+}
+
+export async function bootstrapConsumer(config: AppConfig): Promise<BootstrappedConsumer> {
   if (config.consumer === undefined) {
     throw new Error('Configuração do consumer ausente.');
   }
@@ -37,8 +43,9 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
   );
 
   const sqsClient = buildSqsClient(config);
+  const metrics = new PrometheusMetricsAdapter();
 
-  return new SqsWagerTransactionConsumer(
+  const consumer = new SqsWagerTransactionConsumer(
     sqsClient,
     config.consumer.queueUrl,
     config.consumer.dlqUrl,
@@ -47,7 +54,9 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
     {
       maxMessages: config.consumer.maxMessages,
       visibilityTimeoutSeconds: config.consumer.visibilityTimeoutSeconds,
-      metrics: new PrometheusMetricsAdapter(),
+      metrics,
     },
   );
+
+  return { consumer, metrics };
 }

@@ -38,9 +38,12 @@ describeIfDocker('docker compose — stack de desenvolvimento', () => {
     expect(Object.keys(config.services).sort()).toEqual([
       'api',
       'consumer',
+      'grafana',
       'localstack',
       'migrate',
       'postgres',
+      'prometheus',
+      'tempo',
       'worker',
     ]);
     expect(config.services['postgres']?.healthcheck).toBeDefined();

@@ -3,6 +3,7 @@ import type {
   HttpRequestDurationInput,
   MetricsExposition,
   MetricsPort,
+  OutboxPublishMetricInput,
   ProviderMetricInput,
   RejectionMetricInput,
   WagerTransactionMetricInput,
@@ -15,6 +16,7 @@ export class PrometheusMetricsAdapter implements MetricsPort {
   private readonly idempotencyConflictsTotal: Counter<'provider'>;
   private readonly rejectionsTotal: Counter<'failure_code'>;
   private readonly httpRequestDurationSeconds: Histogram<'method' | 'route' | 'status_code'>;
+  private readonly outboxMessagesPublishedTotal: Counter<'status'>;
 
   constructor(registry: Registry = new Registry()) {
     this.registry = registry;
@@ -54,6 +56,13 @@ export class PrometheusMetricsAdapter implements MetricsPort {
       labelNames: ['method', 'route', 'status_code'],
       registers: [this.registry],
     });
+
+    this.outboxMessagesPublishedTotal = new Counter({
+      name: 'outbox_messages_published_total',
+      help: 'Total de mensagens do outbox publicadas na fila de eventos, por status.',
+      labelNames: ['status'],
+      registers: [this.registry],
+    });
   }
 
   recordWagerTransaction(input: WagerTransactionMetricInput): void {
@@ -77,6 +86,10 @@ export class PrometheusMetricsAdapter implements MetricsPort {
       { method: input.method, route: input.route, status_code: String(input.statusCode) },
       input.durationSeconds,
     );
+  }
+
+  recordOutboxPublish(input: OutboxPublishMetricInput): void {
+    this.outboxMessagesPublishedTotal.inc({ status: input.status });
   }
 
   async exposition(): Promise<MetricsExposition> {

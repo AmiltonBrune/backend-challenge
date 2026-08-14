@@ -32,8 +32,15 @@ describe('loadConfig — comuns a todo papel', () => {
     const config = loadConfig({ ...commonEnv }, 'api');
 
     expect(config.port).toBe(3000);
+    expect(config.metricsPort).toBe(9464);
     expect(config.dbPoolSize).toBe(10);
     expect(config.logLevel).toBe('info');
+  });
+
+  it('permite sobrescrever METRICS_PORT', () => {
+    const config = loadConfig({ ...commonEnv, METRICS_PORT: '9500' }, 'api');
+
+    expect(config.metricsPort).toBe(9500);
   });
 
   it('converte variaveis numericas para number, nunca string', () => {

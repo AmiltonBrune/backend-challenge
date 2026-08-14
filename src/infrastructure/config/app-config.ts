@@ -18,6 +18,7 @@ export interface WorkerConfig {
 
 export interface AppConfig {
   readonly port: number;
+  readonly metricsPort: number;
   readonly databaseUrl: string;
   readonly dbPoolSize: number;
   readonly dbStatementTimeoutMs: number;
