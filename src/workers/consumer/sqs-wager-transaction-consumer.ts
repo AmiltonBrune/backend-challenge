@@ -1,10 +1,18 @@
 import { randomUUID } from 'node:crypto';
-import { DeleteMessageCommand, ReceiveMessageCommand, type Message, type SQSClient } from '@aws-sdk/client-sqs';
+import {
+  DeleteMessageCommand,
+  ReceiveMessageCommand,
+  SendMessageCommand,
+  type Message,
+  type SQSClient,
+} from '@aws-sdk/client-sqs';
 import type { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
 import type { MetricsPort } from '@application/ports/metrics-port.ts';
+import { InternalKindNotAllowedError } from '@domain/errors/internal-kind-not-allowed-error.ts';
 import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { runWithCorrelationId } from '@infrastructure/observability/correlation-context.ts';
 import { logger } from '@infrastructure/observability/logger.ts';
+import { InvalidQueueMessageError } from './invalid-queue-message-error.ts';
 import { parseWagerTransactionMessage } from './wager-transaction-message.ts';
 
 const DEFAULT_MAX_MESSAGES = 10;
@@ -30,6 +38,8 @@ export class SqsWagerTransactionConsumer {
   constructor(
     private readonly client: SQSClient,
     private readonly queueUrl: string,
+    private readonly dlqUrl: string,
+    private readonly consumerName: string,
     private readonly useCase: ProcessWagerTransactionUseCase,
     options: SqsWagerTransactionConsumerOptions = {},
   ) {
@@ -79,37 +89,65 @@ export class SqsWagerTransactionConsumer {
   }
 
   private async processOne(message: Message): Promise<void> {
-    if (message.Body === undefined || message.ReceiptHandle === undefined) {
+    const { Body: body, ReceiptHandle: receiptHandle, MessageId: messageId } = message;
+    if (body === undefined || receiptHandle === undefined || messageId === undefined) {
       return;
     }
 
-    const correlationId = message.MessageId ?? randomUUID();
+    const correlationId = messageId ?? randomUUID();
     await runWithCorrelationId(correlationId, async () => {
-      const input = parseWagerTransactionMessage(message.Body as string);
-      const result = await this.useCase.execute(input);
+      try {
+        const input = parseWagerTransactionMessage(body);
+        const result = await this.useCase.execute(input, { messageId, consumerName: this.consumerName });
 
-      this.metrics?.recordWagerTransaction({
-        kind: input.kind,
-        status: result.status,
-        provider: input.declaredProviderId,
-      });
-      if (result.idempotentReplay) {
-        this.metrics?.recordIdempotentReplay({ provider: input.declaredProviderId });
+        if ('duplicateMessage' in result) {
+          await this.deleteMessage(receiptHandle);
+          return;
+        }
+
+        this.metrics?.recordWagerTransaction({
+          kind: input.kind,
+          status: result.status,
+          provider: input.declaredProviderId,
+        });
+        if (result.idempotentReplay) {
+          this.metrics?.recordIdempotentReplay({ provider: input.declaredProviderId });
+        }
+        if (result.status === WagerTransactionStatus.REJECTED && result.failureCode !== undefined) {
+          this.metrics?.recordRejection({ failureCode: result.failureCode });
+        }
+
+        logger.info('mensagem SQS processada', {
+          transactionId: result.transactionId,
+          kind: input.kind,
+          status: result.status,
+          idempotentReplay: result.idempotentReplay,
+        });
+
+        await this.deleteMessage(receiptHandle);
+      } catch (error) {
+        if (error instanceof InvalidQueueMessageError || error instanceof InternalKindNotAllowedError) {
+          await this.forwardToDlq(body, messageId);
+          await this.deleteMessage(receiptHandle);
+          return;
+        }
+        throw error;
       }
-      if (result.status === WagerTransactionStatus.REJECTED && result.failureCode !== undefined) {
-        this.metrics?.recordRejection({ failureCode: result.failureCode });
-      }
-
-      logger.info('mensagem SQS processada', {
-        transactionId: result.transactionId,
-        kind: input.kind,
-        status: result.status,
-        idempotentReplay: result.idempotentReplay,
-      });
-
-      await this.client.send(
-        new DeleteMessageCommand({ QueueUrl: this.queueUrl, ReceiptHandle: message.ReceiptHandle }),
-      );
     });
+  }
+
+  private async forwardToDlq(body: string, messageId: string): Promise<void> {
+    await this.client.send(
+      new SendMessageCommand({
+        QueueUrl: this.dlqUrl,
+        MessageBody: body,
+        MessageGroupId: messageId,
+        MessageDeduplicationId: messageId,
+      }),
+    );
+  }
+
+  private async deleteMessage(receiptHandle: string): Promise<void> {
+    await this.client.send(new DeleteMessageCommand({ QueueUrl: this.queueUrl, ReceiptHandle: receiptHandle }));
   }
 }

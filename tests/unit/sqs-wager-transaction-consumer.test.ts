@@ -2,21 +2,25 @@ import { describe, expect, it } from 'bun:test';
 import {
   DeleteMessageCommand,
   ReceiveMessageCommand,
+  SendMessageCommand,
   type Message,
   type SQSClient,
 } from '@aws-sdk/client-sqs';
 import type { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
 import type {
+  MetricsPort,
   ProviderMetricInput,
   RejectionMetricInput,
   WagerTransactionMetricInput,
 } from '@application/ports/metrics-port.ts';
-import type { MetricsPort } from '@application/ports/metrics-port.ts';
+import { InternalKindNotAllowedError } from '@domain/errors/internal-kind-not-allowed-error.ts';
 import { WagerTransactionStatus } from '@domain/wager-transaction/wager-transaction-status.ts';
 import { getCorrelationId } from '@infrastructure/observability/correlation-context.ts';
 import { SqsWagerTransactionConsumer } from '@workers/consumer/sqs-wager-transaction-consumer.ts';
 
 const QUEUE_URL = 'http://localhost:4566/000000000000/wager-transactions.fifo';
+const DLQ_URL = 'http://localhost:4566/000000000000/wager-transactions-dlq.fifo';
+const CONSUMER_NAME = 'wagering-consumer';
 
 function validMessageBody(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
@@ -55,6 +59,10 @@ function fakeSqsClient(messages: Message[]): { client: SQSClient; calls: Recorde
         calls.push({ command: 'DeleteMessageCommand', input: command.input });
         return {};
       }
+      if (command instanceof SendMessageCommand) {
+        calls.push({ command: 'SendMessageCommand', input: command.input });
+        return {};
+      }
       throw new Error(`comando não esperado: ${String(command)}`);
     },
   } as unknown as SQSClient;
@@ -62,10 +70,16 @@ function fakeSqsClient(messages: Message[]): { client: SQSClient; calls: Recorde
   return { client, calls };
 }
 
-function fakeUseCase(
-  execute: (input: unknown) => Promise<unknown>,
-): ProcessWagerTransactionUseCase {
+function fakeUseCase(execute: (input: unknown, deduplication?: unknown) => Promise<unknown>): ProcessWagerTransactionUseCase {
   return { execute } as unknown as ProcessWagerTransactionUseCase;
+}
+
+function buildConsumer(
+  client: SQSClient,
+  useCase: ProcessWagerTransactionUseCase,
+  options?: ConstructorParameters<typeof SqsWagerTransactionConsumer>[5],
+): SqsWagerTransactionConsumer {
+  return new SqsWagerTransactionConsumer(client, QUEUE_URL, DLQ_URL, CONSUMER_NAME, useCase, options);
 }
 
 describe('SqsWagerTransactionConsumer', () => {
@@ -82,7 +96,7 @@ describe('SqsWagerTransactionConsumer', () => {
       return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
     });
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase, {
+    const consumer = buildConsumer(client, useCase, {
       maxMessages: 10,
       waitTimeSeconds: 20,
       visibilityTimeoutSeconds: 30,
@@ -101,7 +115,7 @@ describe('SqsWagerTransactionConsumer', () => {
     expect((deleteCall?.input as DeleteMessageCommand['input']).ReceiptHandle).toBe('receipt-1');
   });
 
-  it('não apaga a mensagem quando o caso de uso lança um erro', async () => {
+  it('não apaga a mensagem quando o caso de uso lança um erro transitório, e não encaminha à DLQ', async () => {
     const message: Message = {
       MessageId: 'm1',
       ReceiptHandle: 'receipt-1',
@@ -112,30 +126,12 @@ describe('SqsWagerTransactionConsumer', () => {
       throw new Error('banco indisponível');
     });
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase);
+    const consumer = buildConsumer(client, useCase);
 
     await consumer.receiveAndProcessBatch();
 
-    const deleteCalls = calls.filter((call) => call.command === 'DeleteMessageCommand');
-    expect(deleteCalls).toHaveLength(0);
-  });
-
-  it('não apaga a mensagem quando o corpo é malformado, e não chama o caso de uso', async () => {
-    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: '{ inválido' };
-    const { client, calls } = fakeSqsClient([message]);
-    let called = false;
-    const useCase = fakeUseCase(async () => {
-      called = true;
-      return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
-    });
-
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase);
-
-    await consumer.receiveAndProcessBatch();
-
-    expect(called).toBe(false);
-    const deleteCalls = calls.filter((call) => call.command === 'DeleteMessageCommand');
-    expect(deleteCalls).toHaveLength(0);
+    expect(calls.filter((call) => call.command === 'DeleteMessageCommand')).toHaveLength(0);
+    expect(calls.filter((call) => call.command === 'SendMessageCommand')).toHaveLength(0);
   });
 
   it('processa cada mensagem do lote de forma independente — uma falha não impede o ack das demais', async () => {
@@ -154,7 +150,7 @@ describe('SqsWagerTransactionConsumer', () => {
       return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
     });
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase);
+    const consumer = buildConsumer(client, useCase);
 
     await consumer.receiveAndProcessBatch();
 
@@ -169,7 +165,7 @@ describe('SqsWagerTransactionConsumer', () => {
       throw new Error('não deveria ser chamado');
     });
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase);
+    const consumer = buildConsumer(client, useCase);
 
     await consumer.receiveAndProcessBatch();
 
@@ -186,7 +182,7 @@ describe('SqsWagerTransactionConsumer', () => {
       return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
     });
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase);
+    const consumer = buildConsumer(client, useCase);
 
     await consumer.receiveAndProcessBatch();
 
@@ -223,7 +219,7 @@ describe('SqsWagerTransactionConsumer', () => {
     }));
     const { metrics, transactions } = recordingMetrics();
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase, { metrics });
+    const consumer = buildConsumer(client, useCase, { metrics });
 
     await consumer.receiveAndProcessBatch();
 
@@ -241,10 +237,119 @@ describe('SqsWagerTransactionConsumer', () => {
     }));
     const { metrics, rejections } = recordingMetrics();
 
-    const consumer = new SqsWagerTransactionConsumer(client, QUEUE_URL, useCase, { metrics });
+    const consumer = buildConsumer(client, useCase, { metrics });
 
     await consumer.receiveAndProcessBatch();
 
     expect(rejections).toEqual([{ failureCode: 'INSUFFICIENT_FUNDS' }]);
+  });
+
+  it('propaga o messageId e o consumerName ao caso de uso, para deduplicação por inbox', async () => {
+    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: validMessageBody() };
+    const { client } = fakeSqsClient([message]);
+    let receivedDeduplication: unknown;
+    const useCase = fakeUseCase(async (_input, deduplication) => {
+      receivedDeduplication = deduplication;
+      return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
+    });
+
+    const consumer = buildConsumer(client, useCase);
+    await consumer.receiveAndProcessBatch();
+
+    expect(receivedDeduplication).toEqual({ messageId: 'm1', consumerName: CONSUMER_NAME });
+  });
+
+  it('apaga a mensagem quando o caso de uso identifica uma redelivery já processada via inbox', async () => {
+    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: validMessageBody() };
+    const { client, calls } = fakeSqsClient([message]);
+    const useCase = fakeUseCase(async () => ({ duplicateMessage: true }));
+
+    const consumer = buildConsumer(client, useCase);
+    await consumer.receiveAndProcessBatch();
+
+    const deleteCall = calls.find((call) => call.command === 'DeleteMessageCommand');
+    expect((deleteCall?.input as DeleteMessageCommand['input']).ReceiptHandle).toBe('receipt-1');
+  });
+
+  it('encaminha à DLQ e apaga a mensagem original quando o corpo é malformado (erro permanente)', async () => {
+    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: '{ inválido' };
+    const { client, calls } = fakeSqsClient([message]);
+    let called = false;
+    const useCase = fakeUseCase(async () => {
+      called = true;
+      return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
+    });
+
+    const consumer = buildConsumer(client, useCase);
+    await consumer.receiveAndProcessBatch();
+
+    expect(called).toBe(false);
+
+    const dlqCall = calls.find((call) => call.command === 'SendMessageCommand');
+    expect((dlqCall?.input as SendMessageCommand['input']).QueueUrl).toBe(DLQ_URL);
+    expect((dlqCall?.input as SendMessageCommand['input']).MessageBody).toBe('{ inválido');
+
+    const deleteCall = calls.find((call) => call.command === 'DeleteMessageCommand');
+    expect((deleteCall?.input as DeleteMessageCommand['input']).ReceiptHandle).toBe('receipt-1');
+  });
+
+  it('encaminha à DLQ e apaga a mensagem original quando o caso de uso rejeita kind interno não permitido', async () => {
+    const message: Message = {
+      MessageId: 'm1',
+      ReceiptHandle: 'receipt-1',
+      Body: validMessageBody({ kind: 'OPENING' }),
+    };
+    const { client, calls } = fakeSqsClient([message]);
+    const useCase = fakeUseCase(async () => {
+      throw new InternalKindNotAllowedError('OPENING');
+    });
+
+    const consumer = buildConsumer(client, useCase);
+    await consumer.receiveAndProcessBatch();
+
+    const dlqCall = calls.find((call) => call.command === 'SendMessageCommand');
+    expect((dlqCall?.input as SendMessageCommand['input']).QueueUrl).toBe(DLQ_URL);
+
+    const deleteCall = calls.find((call) => call.command === 'DeleteMessageCommand');
+    expect((deleteCall?.input as DeleteMessageCommand['input']).ReceiptHandle).toBe('receipt-1');
+  });
+
+  it('stop() aguarda o lote em andamento terminar antes de retornar', async () => {
+    const message: Message = { MessageId: 'm1', ReceiptHandle: 'receipt-1', Body: validMessageBody() };
+    const { client } = fakeSqsClient([message]);
+
+    let releaseProcessing: () => void = () => {};
+    const processingGate = new Promise<void>((resolve) => {
+      releaseProcessing = resolve;
+    });
+    let processingStarted = false;
+    let resolveStarted: () => void = () => {};
+    const startedSignal = new Promise<void>((resolve) => {
+      resolveStarted = resolve;
+    });
+
+    const useCase = fakeUseCase(async () => {
+      processingStarted = true;
+      resolveStarted();
+      await processingGate;
+      return { transactionId: 't1', status: WagerTransactionStatus.PROCESSED, idempotentReplay: false };
+    });
+
+    const consumer = buildConsumer(client, useCase);
+    consumer.start();
+    await startedSignal;
+    expect(processingStarted).toBe(true);
+
+    let stopped = false;
+    const stopPromise = consumer.stop().then(() => {
+      stopped = true;
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(stopped).toBe(false);
+
+    releaseProcessing();
+    await stopPromise;
+    expect(stopped).toBe(true);
   });
 });

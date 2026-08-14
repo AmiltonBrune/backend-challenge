@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, expect, it } from 'bun:test';
 import type { DataSource } from 'typeorm';
 import type { Clock } from '@application/ports/clock.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
@@ -11,32 +11,7 @@ import { FailureCode } from '@domain/errors/failure-code.ts';
 import { computePayloadHash } from '@domain/idempotency/payload-hash.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
-const composeArgs = ['-f', 'docker-compose.test.yml'] as const;
-
-async function dockerComposeAvailable(): Promise<boolean> {
-  try {
-    const child = Bun.spawn(['docker', 'compose', 'version'], { stdout: 'pipe', stderr: 'pipe' });
-    const exitCode = await child.exited;
-    return exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function runDockerCompose(args: readonly string[]): Promise<void> {
-  const child = Bun.spawn(['docker', 'compose', ...composeArgs, ...args], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) {
-    const stderr = await new Response(child.stderr).text();
-    throw new Error(`docker compose ${args.join(' ')} falhou: ${stderr}`);
-  }
-}
-
-const hasDockerCompose = await dockerComposeAvailable();
-const describeIfDocker = hasDockerCompose ? describe : describe.skip;
+import { describeIfDocker, runDockerCompose } from '@tests/support/docker-compose-harness.ts';
 
 class FixedClock implements Clock {
   now(): Date {
@@ -98,6 +73,9 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
     const { TypeOrmOutboxRepository } = await import(
       '@infrastructure/persistence/repositories/typeorm-outbox-repository.ts'
     );
+    const { TypeOrmInboxRepository } = await import(
+      '@infrastructure/persistence/repositories/typeorm-inbox-repository.ts'
+    );
     const { UuidIdGenerator } = await import('@infrastructure/uuid-id-generator.ts');
     const { ProcessWagerTransactionUseCase } = await import(
       '@application/use-cases/process-wager-transaction-use-case.ts'
@@ -113,6 +91,7 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
       new TypeOrmWagerTransactionRepository(),
       new TypeOrmLedgerRepository(),
       new TypeOrmOutboxRepository(),
+      new TypeOrmInboxRepository(clock),
       new DeclaredIdentity(),
       clock,
       new UuidIdGenerator(),
@@ -555,5 +534,44 @@ describeIfDocker('ProcessWagerTransactionUseCase — contra Postgres real', () =
 
     expect(secondRefund.status).toBe(WagerTransactionStatus.REJECTED);
     expect(secondRefund.failureCode).toBe(FailureCode.REFERENCE_ALREADY_REVERSED);
+  });
+
+  it('deduplicação por inbox: registra no mesmo commit e ignora a redelivery, sem debitar duas vezes', async () => {
+    const wallet = await insertWallet('100.00');
+    const dedup = { messageId: crypto.randomUUID(), consumerName: 'wagering-consumer' };
+    const input = {
+      declaredProviderId: 'provider-a',
+      idempotencyKey: crypto.randomUUID(),
+      externalTransactionId: crypto.randomUUID(),
+      playerId: wallet.playerId,
+      walletId: wallet.id,
+      roundId: 'round-1',
+      gameId: 'game-1',
+      kind: WagerTransactionKind.BET,
+      money: { amount: '25.00', currency: 'BRL' },
+    };
+
+    const first = await processWager().execute(input, dedup);
+    expect('duplicateMessage' in first).toBe(false);
+
+    const inboxRows = await dataSource().query(
+      `SELECT processed_at FROM inbox_messages WHERE consumer_name = $1 AND message_id = $2`,
+      [dedup.consumerName, dedup.messageId],
+    );
+    expect(inboxRows).toHaveLength(1);
+
+    const redelivery = await processWager().execute(input, dedup);
+    expect(redelivery).toEqual({ duplicateMessage: true });
+
+    const walletRows = await dataSource().query(`SELECT balance_amount FROM wallets WHERE id = $1`, [
+      wallet.id,
+    ]);
+    expect((walletRows as { balance_amount: string }[])[0]?.balance_amount).toBe('75.00');
+
+    const ledgerRows = await dataSource().query(
+      `SELECT count(*)::int AS count FROM wallet_ledger_entries WHERE wallet_id = $1`,
+      [wallet.id],
+    );
+    expect((ledgerRows as { count: number }[])[0]?.count).toBe(1);
   });
 });

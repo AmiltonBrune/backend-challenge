@@ -1,6 +1,9 @@
 import type { EntityManager } from 'typeorm';
 import type { TransactionContext } from '@application/ports/transaction-context.ts';
-import type { WagerTransactionRepository } from '@application/ports/wager-transaction-repository.ts';
+import type {
+  PendingReferenceCandidate,
+  WagerTransactionRepository,
+} from '@application/ports/wager-transaction-repository.ts';
 import type { WagerTransactionView } from '@application/dto/wager-transaction-view.ts';
 import { ExternalTransactionConflictError } from '@application/errors/external-transaction-conflict-error.ts';
 import { IdempotencyKeyConflictError } from '@application/errors/idempotency-key-conflict-error.ts';
@@ -79,6 +82,8 @@ export class TypeOrmWagerTransactionRepository implements WagerTransactionReposi
           failureCode: transaction.failureCode() ?? null,
           referenceTransactionId: transaction.referenceTransactionId() ?? null,
           processedAt: transaction.processedAt() ?? null,
+          pendingReferenceAttempts: transaction.pendingReferenceAttempts(),
+          pendingReferenceNextAttemptAt: transaction.pendingReferenceNextAttemptAt() ?? null,
         },
       );
     } catch (error) {
@@ -90,6 +95,31 @@ export class TypeOrmWagerTransactionRepository implements WagerTransactionReposi
     const manager = ctx as EntityManager;
     const entity = await manager.findOne(WagerTransactionEntity, { where: { id } });
     return entity === null ? undefined : WagerTransactionMapper.toDomain(entity);
+  }
+
+  async findEligiblePendingReferenceForRetry(
+    ctx: TransactionContext,
+    now: Date,
+    limit: number,
+  ): Promise<PendingReferenceCandidate[]> {
+    const manager = ctx as EntityManager;
+    const entities = await manager
+      .createQueryBuilder(WagerTransactionEntity, 'tx')
+      .where('tx.status = :status', { status: WagerTransactionStatus.PENDING_REFERENCE })
+      .andWhere(
+        '(tx.pendingReferenceNextAttemptAt IS NULL OR tx.pendingReferenceNextAttemptAt <= :now)',
+        { now },
+      )
+      .orderBy('tx.createdAt', 'ASC')
+      .limit(limit)
+      .setLock('pessimistic_write')
+      .setOnLocked('skip_locked')
+      .getMany();
+
+    return entities.map((entity) => ({
+      transaction: WagerTransactionMapper.toDomain(entity),
+      gameId: entity.gameId,
+    }));
   }
 
   async findByProviderAndIdempotencyKey(

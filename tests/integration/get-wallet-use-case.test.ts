@@ -1,35 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test';
+import { afterAll, beforeAll, expect, it } from 'bun:test';
 import type { DataSource } from 'typeorm';
 import type { GetWalletUseCase } from '@application/use-cases/get-wallet-use-case.ts';
 import { WalletNotFoundError } from '@domain/errors/wallet-not-found-error.ts';
 
 const databaseUrl = 'postgres://wagering:wagering@localhost:55432/wagering_test';
-const composeArgs = ['-f', 'docker-compose.test.yml'] as const;
-
-async function dockerComposeAvailable(): Promise<boolean> {
-  try {
-    const child = Bun.spawn(['docker', 'compose', 'version'], { stdout: 'pipe', stderr: 'pipe' });
-    const exitCode = await child.exited;
-    return exitCode === 0;
-  } catch {
-    return false;
-  }
-}
-
-async function runDockerCompose(args: readonly string[]): Promise<void> {
-  const child = Bun.spawn(['docker', 'compose', ...composeArgs, ...args], {
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
-  const exitCode = await child.exited;
-  if (exitCode !== 0) {
-    const stderr = await new Response(child.stderr).text();
-    throw new Error(`docker compose ${args.join(' ')} falhou: ${stderr}`);
-  }
-}
-
-const hasDockerCompose = await dockerComposeAvailable();
-const describeIfDocker = hasDockerCompose ? describe : describe.skip;
+import { describeIfDocker, runDockerCompose } from '@tests/support/docker-compose-harness.ts';
 
 let AppDataSource: DataSource | undefined;
 let useCase: GetWalletUseCase | undefined;

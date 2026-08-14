@@ -1,5 +1,4 @@
 import type { AppConfig } from '@infrastructure/config/app-config.ts';
-import { buildSqsClient } from '@infrastructure/messaging/sqs-client-factory.ts';
 import { TypeOrmUnitOfWork } from '@infrastructure/persistence/repositories/typeorm-unit-of-work.ts';
 import { TypeOrmWalletRepository } from '@infrastructure/persistence/repositories/typeorm-wallet-repository.ts';
 import { TypeOrmWagerTransactionRepository } from '@infrastructure/persistence/repositories/typeorm-wager-transaction-repository.ts';
@@ -9,13 +8,16 @@ import { TypeOrmInboxRepository } from '@infrastructure/persistence/repositories
 import { SystemClock } from '@infrastructure/system-clock.ts';
 import { UuidIdGenerator } from '@infrastructure/uuid-id-generator.ts';
 import { DeclaredProviderIdentity } from '@infrastructure/declared-provider-identity.ts';
-import { PrometheusMetricsAdapter } from '@infrastructure/observability/prometheus-metrics.ts';
 import { ProcessWagerTransactionUseCase } from '@application/use-cases/process-wager-transaction-use-case.ts';
-import { SqsWagerTransactionConsumer } from './sqs-wager-transaction-consumer.ts';
+import { PendingReferenceRetryWorker } from './pending-reference-retry-worker.ts';
 
-export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTransactionConsumer> {
-  if (config.consumer === undefined) {
-    throw new Error('Configuração do consumer ausente.');
+const PENDING_REFERENCE_BATCH_SIZE = 20;
+
+export async function bootstrapPendingReferenceRetryWorker(
+  config: AppConfig,
+): Promise<PendingReferenceRetryWorker> {
+  if (config.worker === undefined) {
+    throw new Error('Configuração do worker ausente.');
   }
 
   const { AppDataSource } = await import('@infrastructure/persistence/data-source.ts');
@@ -24,10 +26,11 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
   }
 
   const clock = new SystemClock();
+  const wagerTransactionRepository = new TypeOrmWagerTransactionRepository();
   const useCase = new ProcessWagerTransactionUseCase(
     new TypeOrmUnitOfWork(AppDataSource),
     new TypeOrmWalletRepository(clock),
-    new TypeOrmWagerTransactionRepository(),
+    wagerTransactionRepository,
     new TypeOrmLedgerRepository(),
     new TypeOrmOutboxRepository(),
     new TypeOrmInboxRepository(clock),
@@ -36,18 +39,15 @@ export async function bootstrapConsumer(config: AppConfig): Promise<SqsWagerTran
     new UuidIdGenerator(),
   );
 
-  const sqsClient = buildSqsClient(config);
-
-  return new SqsWagerTransactionConsumer(
-    sqsClient,
-    config.consumer.queueUrl,
-    config.consumer.dlqUrl,
-    config.consumer.consumerName,
+  return new PendingReferenceRetryWorker({
+    unitOfWork: new TypeOrmUnitOfWork(AppDataSource),
+    wagerTransactionRepository,
     useCase,
-    {
-      maxMessages: config.consumer.maxMessages,
-      visibilityTimeoutSeconds: config.consumer.visibilityTimeoutSeconds,
-      metrics: new PrometheusMetricsAdapter(),
+    clock,
+    batchSize: PENDING_REFERENCE_BATCH_SIZE,
+    retryPolicy: {
+      maxAttempts: config.worker.pendingReferenceMaxAttempts,
+      ttlHours: config.worker.pendingReferenceTtlHours,
     },
-  );
+  });
 }
