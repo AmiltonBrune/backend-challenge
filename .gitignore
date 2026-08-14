@@ -12,7 +12,8 @@ build/
 !.env.example
 
 # Documentação de planejamento (mantida apenas local)
-docs/
+docs/*
+!docs/ARCHITECTURE.md
 
 # Cobertura e logs
 coverage/

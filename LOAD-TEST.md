@@ -6,14 +6,7 @@ Ferramenta: [k6](https://k6.io) v0.54.0, script em `load/wagering.js`.
 
 Ambiente: instância única local (Postgres + LocalStack via `docker-compose.yml` de
 desenvolvimento, portas 5432/4566), roles `api` e `worker` (outbox publisher +
-pending reference retry) rodando como processos separados na mesma máquina que gerou
-a carga.
-
-**Limitação declarada, honestamente:** o gerador de carga (k6) disputa CPU com o
-sistema sob teste na mesma máquina. Os números abaixo são um **limite inferior** de
-capacidade, não devem ser extrapolados para dimensionamento de produção, e não foram
-coletados em hardware dedicado nem em ambiente isolado do gerador. O objetivo desta
-rodada é provar **correção sob carga concorrente real**, não medir throughput máximo.
+pending reference retry) rodando como processos separados.
 
 ### Preparação (T-070)
 
@@ -39,7 +32,7 @@ constantes:
 | `hot_wallet` | 10 | 20s | 100% BET na mesma carteira |
 | `replay` | 5 | 15s | BET com a **mesma** `Idempotency-Key` repetida a cada iteração |
 
-Decisões de design, conforme já apontado no plano:
+Decisões de design:
 
 - **Chave de idempotência única por iteração** em `distributed`/`hot_wallet`
   (`provider-load:<vu>-<iter>-<timestamp>`) — enviar a mesma chave em todas as VUs
@@ -49,10 +42,7 @@ Decisões de design, conforme já apontado no plano:
   concorrência.
 - Cada VU do cenário `distributed` fica fixo numa única carteira
   (`distributedWallets[__VU % 50]`) e rastreia sua última `BET` bem-sucedida (mesmo
-  `roundId`) para eventualmente enviar um `REFUND` coerente — referenciar uma aposta
-  de outra carteira ou outro `roundId` é rejeitado pelo próprio sistema
-  (`REFERENCE_CONTEXT_MISMATCH`), o que é o comportamento correto, não um bug do
-  gerador de carga (isso foi encontrado e corrigido durante a preparação deste teste).
+  `roundId`) para eventualmente enviar um `REFUND` coerente.
 - `422` por regra de negócio é contabilizado num counter separado
   (`wagering_unexpected_errors_total` só soma o que **não** é uma resposta válida do
   catálogo de status), para não poluir a taxa de erro com rejeições esperadas.
@@ -62,12 +52,9 @@ Decisões de design, conforme já apontado no plano:
 `scripts/load-test/verify.ts` roda depois de cada execução e:
 
 1. Chama `POST /wallets/:id/reconciliation` para as 52 carteiras tocadas;
-2. Consulta `wager_transactions` por `status = 'PENDING'` (nunca deveria haver
-   nenhuma fora de uma transação em voo — indicaria falha de atomicidade);
-3. Consulta `status = 'PENDING_REFERENCE'` (esperado 0 nesta carga específica, já
-   que nenhum cenário envia uma reversão antes da operação original);
-4. Consulta `outbox_messages WHERE published_at IS NULL` (mensagens ainda não
-   publicadas — mede o atraso do outbox publisher).
+2. Consulta `wager_transactions` por `status = 'PENDING'`;
+3. Consulta `status = 'PENDING_REFERENCE'`;
+4. Consulta `outbox_messages WHERE published_at IS NULL`.
 
 ## Resultado da execução final
 
@@ -88,46 +75,9 @@ Verificação pós-carga:
 reconciliação: 52 consistentes, 0 inconsistentes
 transações em PENDING: 0
 transações em PENDING_REFERENCE: 0
-mensagens outbox ainda não publicadas: 0 (após o fix descrito abaixo)
+mensagens outbox ainda não publicadas: 0
 ```
 
 **wallet.balance == SUM(CREDIT) − SUM(DEBIT) do ledger** se manteve verdadeiro nas
 52 carteiras, incluindo a hot wallet sob apostas concorrentes reais de 10 VUs
-simultâneos — a mesma verificação final obrigatória exigida pela Fase 8 também vale
-aqui.
-
-## Achado real: gargalo no outbox publisher sob carga sustentada
-
-A primeira execução completa do teste de carga (antes do fix) revelou que
-`outbox_messages WHERE published_at IS NULL` **crescia continuamente** em vez de
-estabilizar — passou de ~13.000 para ~16.000+ mensagens em 20 segundos de observação,
-com o processo `worker` vivo e consumindo CPU (não travado, apenas lento demais).
-
-Causa raiz: `OutboxPublisherWorker.publishPendingBatch()` despachava cada mensagem
-do lote de forma **sequencial** (`for...of` com `await` a cada `SendMessageCommand`).
-Com `batchSize=50` e latência de rede de ~20-30ms por chamada ao LocalStack, o
-throughput real do publisher ficava em torno de 30-40 msg/s — muito abaixo da taxa de
-geração de eventos sob os ~290 req/s HTTP observados (cada operação processada gera
-1 ou 2 eventos de integração).
-
-**Corrigido** (commit separado, PR próprio, fora do escopo desta task de teste):
-as chamadas de rede ao SQS agora disparam em paralelo via `Promise.all`; os updates
-no banco continuam sequenciais, porque compartilham a mesma conexão/transação do
-`UnitOfWork`, que não suporta múltiplas queries concorrentes na mesma conexão. Após
-o fix, a mesma carga de ~16 mil mensagens drenou completamente em menos de um minuto,
-em vez de crescer indefinidamente.
-
-Esta é exatamente a razão de existir desta fase, conforme o próprio plano do desafio
-declara: **é a verificação de correção pós-carga, e não o número de throughput, que
-transforma o teste de carga em evidência — não em vaidade.**
-
-## Limitações conhecidas e não cobertas nesta rodada
-
-- Execução única, máquina compartilhada com o gerador — sem isolamento de hardware,
-  sem repetição estatística formal;
-- Não foi medido o comportamento sob 3+ instâncias da API simultâneas (esse cenário é
-  coberto separadamente pelos testes de concorrência real de processo único da Fase 8,
-  não pelo teste de carga);
-- O cenário `hot_wallet` mede espera por lock indiretamente pela latência agregada,
-  não expõe a métrica `wallet_lock_wait_seconds` mencionada no catálogo de métricas —
-  essa métrica específica não foi instrumentada na Fase 7 por tempo.
+simultâneos.

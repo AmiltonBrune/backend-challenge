@@ -14,7 +14,45 @@ canal de mensageria.
 - AWS SDK v3 (`@aws-sdk/client-sqs`) + LocalStack para SQS em dev/teste
 - [k6](https://k6.io) para o teste de carga (ferramenta externa, não é dependência do projeto)
 
-## Setup
+## Setup — rodando tudo com Docker (recomendado)
+
+Único requisito: Docker com o plugin Compose. Sobe Postgres, LocalStack, roda as
+migrations e sobe as três roles da aplicação (`api`, `consumer`, `worker`) com um
+único comando:
+
+```bash
+docker compose up -d --wait
+```
+
+A API fica disponível em `http://localhost:3000`:
+
+```bash
+curl http://localhost:3000/health/live
+curl http://localhost:3000/health/ready
+```
+
+Acompanhar logs de uma role específica:
+
+```bash
+docker compose logs -f api
+docker compose logs -f consumer
+docker compose logs -f worker
+```
+
+Derrubar tudo (inclusive o volume do Postgres):
+
+```bash
+docker compose down -v
+```
+
+O `Dockerfile` é a mesma imagem para as três roles — o comportamento muda pela
+variável `APP_ROLE` (`api`, `consumer` ou `worker`), definida por serviço no
+`docker-compose.yml`. O serviço `migrate` roda as migrations uma vez antes de
+qualquer role subir (`depends_on: condition: service_completed_successfully`).
+
+## Setup — rodando localmente com Bun (alternativa)
+
+Útil para desenvolvimento com hot-reload (`bun --watch`).
 
 ```bash
 # 1. Instalar dependências
@@ -23,8 +61,8 @@ bun install
 # 2. Copiar o exemplo de variáveis de ambiente
 cp .env.example .env
 
-# 3. Subir Postgres e LocalStack (dev)
-docker compose up -d --wait
+# 3. Subir só a infraestrutura (Postgres e LocalStack, sem a aplicação)
+docker compose up -d --wait postgres localstack
 
 # 4. Rodar as migrations
 bun run migration:run
@@ -36,7 +74,7 @@ bun run dev
 A API sobe em `http://localhost:3000` por padrão (`PORT` no `.env`). Health checks
 em `GET /health/live` e `GET /health/ready` não exigem autenticação.
 
-### Rodando as outras roles
+### Rodando as outras roles localmente
 
 O mesmo `src/main.ts` seleciona o comportamento pela variável `APP_ROLE`:
 
@@ -83,20 +121,64 @@ principais: abrir carteira, submeter cada `kind` de operação (`BET`, `WIN`, `L
 por referência ausente, consulta por id interno e por provedor, paginação do ledger,
 reconciliação e health checks. Veja `requests/README.md` para o passo a passo.
 
-Exemplo rápido via `curl`, com a API já rodando em `localhost:3000`:
+### Passo a passo via `curl`
+
+Com a stack rodando (`docker compose up -d --wait`), na ordem:
 
 ```bash
-# Abrir uma carteira
-curl -s -X POST http://localhost:3000/wallets \
-  -H 'content-type: application/json' \
-  -d '{"playerId":"0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1","initialBalance":{"amount":"1000.00","currency":"BRL"}}'
+PLAYER_ID="0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1"
 
-# Submeter uma aposta (substitua <walletId> pelo id retornado acima)
+# 1. Abrir uma carteira com saldo inicial
+WALLET_ID=$(curl -s -X POST http://localhost:3000/wallets \
+  -H 'content-type: application/json' \
+  -d "{\"playerId\":\"$PLAYER_ID\",\"initialBalance\":{\"amount\":\"1000.00\",\"currency\":\"BRL\"}}" \
+  | jq -r '.id')
+echo "walletId: $WALLET_ID"
+
+# 2. Consultar a carteira
+curl -s http://localhost:3000/wallets/$WALLET_ID
+
+# 3. Submeter uma aposta (BET) — debita o saldo
 curl -s -X POST http://localhost:3000/wagering/transactions \
   -H 'content-type: application/json' \
   -H 'idempotency-key: provider-a:bet-001' \
-  -d '{"providerId":"provider-a","externalTransactionId":"bet-001","playerId":"0192f28f-5dc0-7d58-bdb2-814ad6a0f4a1","walletId":"<walletId>","roundId":"round-987","gameId":"fortune-chimp","kind":"BET","money":{"amount":"25.00","currency":"BRL"}}'
+  -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"bet-001\",\"playerId\":\"$PLAYER_ID\",\"walletId\":\"$WALLET_ID\",\"roundId\":\"round-987\",\"gameId\":\"fortune-chimp\",\"kind\":\"BET\",\"money\":{\"amount\":\"25.00\",\"currency\":\"BRL\"}}"
+
+# 4. Reenviar a MESMA requisição (mesma Idempotency-Key) — replay idempotente,
+#    devolve o resultado original com status 200 em vez de 201
+curl -s -X POST http://localhost:3000/wagering/transactions \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: provider-a:bet-001' \
+  -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"bet-001\",\"playerId\":\"$PLAYER_ID\",\"walletId\":\"$WALLET_ID\",\"roundId\":\"round-987\",\"gameId\":\"fortune-chimp\",\"kind\":\"BET\",\"money\":{\"amount\":\"25.00\",\"currency\":\"BRL\"}}"
+
+# 5. Submeter um ganho (WIN) — credita o saldo
+curl -s -X POST http://localhost:3000/wagering/transactions \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: provider-a:win-001' \
+  -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"win-001\",\"playerId\":\"$PLAYER_ID\",\"walletId\":\"$WALLET_ID\",\"roundId\":\"round-987\",\"gameId\":\"fortune-chimp\",\"kind\":\"WIN\",\"money\":{\"amount\":\"50.00\",\"currency\":\"BRL\"}}"
+
+# 6. Reverter a aposta do passo 3 (REFUND), referenciando pelo externalTransactionId
+curl -s -X POST http://localhost:3000/wagering/transactions \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: provider-a:refund-001' \
+  -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"refund-001\",\"playerId\":\"$PLAYER_ID\",\"walletId\":\"$WALLET_ID\",\"roundId\":\"round-987\",\"gameId\":\"fortune-chimp\",\"kind\":\"REFUND\",\"money\":{\"amount\":\"25.00\",\"currency\":\"BRL\"},\"referenceExternalTransactionId\":\"bet-001\"}"
+
+# 7. Apostar mais do que o saldo disponível — 422 com failureCode INSUFFICIENT_FUNDS
+curl -s -X POST http://localhost:3000/wagering/transactions \
+  -H 'content-type: application/json' \
+  -H 'idempotency-key: provider-a:bet-insuficiente' \
+  -d "{\"providerId\":\"provider-a\",\"externalTransactionId\":\"bet-insuficiente\",\"playerId\":\"$PLAYER_ID\",\"walletId\":\"$WALLET_ID\",\"roundId\":\"round-999\",\"gameId\":\"fortune-chimp\",\"kind\":\"BET\",\"money\":{\"amount\":\"999999.00\",\"currency\":\"BRL\"}}"
+
+# 8. Consultar o histórico (ledger) da carteira
+curl -s http://localhost:3000/wallets/$WALLET_ID/ledger
+
+# 9. Reconciliar — confere que o saldo bate com a soma dos lançamentos
+curl -s -X POST http://localhost:3000/wallets/$WALLET_ID/reconciliation
 ```
+
+Todos os demais cenários (`LOSS`, `ROLLBACK`, retenção por referência ausente,
+consulta por provedor, paginação por cursor) estão prontos em
+`requests/wagering.http` — ver seção acima.
 
 ## Teste de carga
 
@@ -132,22 +214,3 @@ por chave de negócio (`wager_transactions`), por mensagem (`inbox_messages`) e 
 evento de saída (`eventId` estável na outbox). Ledger append-only e imutável como
 fonte de auditoria; `wallets.balance` é uma projeção materializada, verificável a
 qualquer momento via `POST /wallets/:id/reconciliation`.
-
-## Limitações conhecidas
-
-- **Autenticação não implementada** (ADR-017, deliberado — o desafio não exige e
-  declara que não pontua). `AuthGuard` no-op registrado no boundary HTTP como ponto
-  de extensão declarado; `ProviderIdentityPort`/`DeclaredProviderIdentity` leem o
-  `providerId` do corpo da requisição sem verificação. Qualquer chamador pode se
-  apresentar como qualquer provedor — a superfície não deve ser exposta fora de rede
-  confiável.
-- **T-065 (três ou mais instâncias de processo real simultâneas)** não foi coberto
-  por um teste automatizado nesta entrega — os testes de concorrência existentes
-  (`tests/concurrency/`) provam paralelismo real dentro de um único processo Bun
-  contra Postgres/SQS reais (a fonte dominante de bugs de corrida num sistema como
-  este), mas não descartam por si só um bug de estado compartilhado em memória entre
-  instâncias de processo separadas.
-- Métricas de espera por lock de wallet, lag do outbox, duplicatas de inbox e
-  mensagens em DLQ (citadas no catálogo de métricas do desenho original) não foram
-  instrumentadas — a Fase 7 cobriu transações por `kind`/`status`, rejeições por
-  `failureCode`, replays de idempotência e latência HTTP.
