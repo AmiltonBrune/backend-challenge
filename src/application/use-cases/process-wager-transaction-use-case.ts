@@ -183,10 +183,10 @@ export class ProcessWagerTransactionUseCase {
         : {}),
     });
 
+    const wallet = await this.walletRepository.findByIdForUpdate(ctx, input.walletId);
     await this.wagerTransactionRepository.insert(ctx, transaction, input.gameId);
 
     try {
-      const wallet = await this.walletRepository.findByIdForUpdate(ctx, input.walletId);
       if (wallet === undefined) {
         throw new WalletNotFoundError(input.walletId);
       }
