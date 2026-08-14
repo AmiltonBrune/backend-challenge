@@ -26,3 +26,6 @@ logs/
 
 # Worktrees de agentes (Claude Code)
 .claude/worktrees/
+
+# Saída gerada do seed de teste de carga (efêmera por execução)
+load/seed-output.json
