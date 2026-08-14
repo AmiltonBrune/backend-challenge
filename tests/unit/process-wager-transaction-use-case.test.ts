@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import type { Clock } from '@application/ports/clock.ts';
 import type { IdGenerator } from '@application/ports/id-generator.ts';
+import type { InboxInsertResult, InboxRepository } from '@application/ports/inbox-repository.ts';
 import type { LedgerRepository } from '@application/ports/ledger-repository.ts';
 import type { OutboxRepository } from '@application/ports/outbox-repository.ts';
 import type { ProviderIdentityPort } from '@application/ports/provider-identity-port.ts';
@@ -17,6 +18,7 @@ import { computePayloadHash } from '@domain/idempotency/payload-hash.ts';
 import { LedgerDirection } from '@domain/ledger/ledger-direction.ts';
 import type { WalletLedgerEntry } from '@domain/ledger/wallet-ledger-entry.ts';
 import { Money } from '@domain/money/money.ts';
+import type { InboxMessage } from '@domain/messaging/inbox-message.ts';
 import type { OutboxMessage } from '@domain/messaging/outbox-message.ts';
 import { Wallet } from '@domain/wallet/wallet.ts';
 import { WagerTransaction } from '@domain/wager-transaction/wager-transaction.ts';
@@ -187,11 +189,31 @@ class InMemoryOutboxRepository implements OutboxRepository {
   async update(): Promise<void> {}
 }
 
+class InMemoryInboxRepository implements InboxRepository {
+  readonly seen = new Set<string>();
+  readonly calls: { messageId: string; consumerName: string; payloadHash: string }[] = [];
+
+  async insert(_ctx: TransactionContext, message: InboxMessage): Promise<InboxInsertResult> {
+    const key = `${message.consumerName}:${message.messageId}`;
+    this.calls.push({
+      messageId: message.messageId,
+      consumerName: message.consumerName,
+      payloadHash: message.payloadHash,
+    });
+    if (this.seen.has(key)) {
+      return 'already-processed';
+    }
+    this.seen.add(key);
+    return 'inserted';
+  }
+}
+
 function buildUseCase() {
   const walletRepository = new InMemoryWalletRepository();
   const wagerTransactionRepository = new InMemoryWagerTransactionRepository();
   const ledgerRepository = new InMemoryLedgerRepository();
   const outboxRepository = new InMemoryOutboxRepository();
+  const inboxRepository = new InMemoryInboxRepository();
   const clock = new FixedClock(new Date('2026-08-13T00:00:00.000Z'));
   const idGenerator = new SequentialIdGenerator();
 
@@ -201,12 +223,20 @@ function buildUseCase() {
     wagerTransactionRepository,
     ledgerRepository,
     outboxRepository,
+    inboxRepository,
     new DeclaredIdentity(),
     clock,
     idGenerator,
   );
 
-  return { useCase, walletRepository, wagerTransactionRepository, ledgerRepository, outboxRepository };
+  return {
+    useCase,
+    walletRepository,
+    wagerTransactionRepository,
+    ledgerRepository,
+    outboxRepository,
+    inboxRepository,
+  };
 }
 
 function baseInput(overrides: Partial<Parameters<ProcessWagerTransactionUseCase['execute']>[0]> = {}) {
@@ -823,5 +853,104 @@ describe('ProcessWagerTransactionUseCase — replay e conflito de idempotência'
     wagerTransactionRepository.store.set(pending.id, pending);
 
     await expect(useCase.execute(input)).rejects.toThrow(ConcurrentIdempotencyProcessingError);
+  });
+});
+
+describe('ProcessWagerTransactionUseCase — deduplicação por inbox (T-049)', () => {
+  it('sem deduplication informado, não consulta a inbox', async () => {
+    const { useCase, walletRepository, inboxRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+
+    await useCase.execute(baseInput());
+
+    expect(inboxRepository.calls).toHaveLength(0);
+  });
+
+  it('na primeira entrega, registra na inbox e processa normalmente', async () => {
+    const { useCase, walletRepository, inboxRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+
+    const result = await useCase.execute(baseInput(), {
+      messageId: 'sqs-msg-1',
+      consumerName: 'wagering-consumer',
+    });
+
+    expect('duplicateMessage' in result).toBe(false);
+    if (!('duplicateMessage' in result)) {
+      expect(result.status).toBe(WagerTransactionStatus.PROCESSED);
+    }
+    expect(inboxRepository.calls).toHaveLength(1);
+    expect(inboxRepository.calls[0]).toEqual({
+      messageId: 'sqs-msg-1',
+      consumerName: 'wagering-consumer',
+      payloadHash: await computePayloadHash({
+        providerId: 'provider-a',
+        externalTransactionId: 'ext-1',
+        playerId: 'player-1',
+        walletId: 'wallet-1',
+        roundId: 'round-1',
+        gameId: 'game-1',
+        kind: WagerTransactionKind.BET,
+        money: { amount: '25.00', currency: 'BRL' },
+      }),
+    });
+  });
+
+  it('numa redelivery da mesma mensagem, pula o processamento e não repete efeitos colaterais', async () => {
+    const { useCase, walletRepository, ledgerRepository, outboxRepository, inboxRepository } = buildUseCase();
+    walletRepository.seed(
+      Wallet.rehydrate({
+        id: 'wallet-1',
+        playerId: 'player-1',
+        currency: 'BRL',
+        balance: Money.from({ amount: '100.00', currency: 'BRL' }),
+        version: 1,
+      }),
+    );
+    const dedup = { messageId: 'sqs-msg-1', consumerName: 'wagering-consumer' };
+
+    await useCase.execute(baseInput(), dedup);
+    const wallet = walletRepository.store.get('wallet-1');
+    expect(wallet?.balance().toJSON().amount).toBe('75.00');
+
+    const secondResult = await useCase.execute(baseInput(), dedup);
+
+    expect(secondResult).toEqual({ duplicateMessage: true });
+    expect(inboxRepository.calls).toHaveLength(2);
+    expect(walletRepository.store.get('wallet-1')?.balance().toJSON().amount).toBe('75.00');
+    expect(ledgerRepository.store).toHaveLength(1);
+    expect(outboxRepository.store).toHaveLength(2);
+  });
+
+  it('em uma rejeição de negócio, também registra na inbox no mesmo commit', async () => {
+    const { useCase, inboxRepository, outboxRepository } = buildUseCase();
+    const dedup = { messageId: 'sqs-msg-rejeitado', consumerName: 'wagering-consumer' };
+
+    const result = await useCase.execute(baseInput(), dedup);
+
+    if (!('duplicateMessage' in result)) {
+      expect(result.status).toBe(WagerTransactionStatus.REJECTED);
+    }
+    expect(inboxRepository.calls).toHaveLength(1);
+    expect(outboxRepository.store).toHaveLength(1);
+
+    const secondResult = await useCase.execute(baseInput(), dedup);
+    expect(secondResult).toEqual({ duplicateMessage: true });
   });
 });

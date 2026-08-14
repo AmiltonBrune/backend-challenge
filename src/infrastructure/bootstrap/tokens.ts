@@ -4,6 +4,7 @@ export const WALLET_REPOSITORY = Symbol('WalletRepository');
 export const WAGER_TRANSACTION_REPOSITORY = Symbol('WagerTransactionRepository');
 export const LEDGER_REPOSITORY = Symbol('LedgerRepository');
 export const OUTBOX_REPOSITORY = Symbol('OutboxRepository');
+export const INBOX_REPOSITORY = Symbol('InboxRepository');
 export const CLOCK = Symbol('Clock');
 export const ID_GENERATOR = Symbol('IdGenerator');
 export const PROVIDER_IDENTITY = Symbol('ProviderIdentityPort');
